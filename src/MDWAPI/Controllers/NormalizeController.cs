@@ -104,7 +104,7 @@ public class NormalizeController : ControllerBase
             Mode = "by-ref",
             TotalRefs = 1
         };
-        var transId = await audit.BeginAsync(trans, ct);   // << trans.BatchNo ถูกกำหนดแน่นอน ณ จุดนี้
+        var transId = await audit.BeginAsync(trans, ct);
 
         // refresh token
         await RefreshTokenIfNeededAsync(platform, shopId , sellerId, env, ct);
