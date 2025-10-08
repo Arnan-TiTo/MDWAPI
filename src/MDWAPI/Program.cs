@@ -1,0 +1,191 @@
+﻿using MDWAPI.Auth;
+using MDWAPI.Data;
+using MDWAPI.Entities;
+using MDWAPI.Models;
+using MDWAPI.Repos;
+using MDWAPI.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
+using System.Net;
+using System.Net.Http.Headers;
+using Microsoft.AspNetCore.HttpOverrides;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ===== DATABASE =====
+var conn = Environment.GetEnvironmentVariable("APP_DB")
+    ?? "Server=localhost;Database=imw;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+
+builder.Services.AddDbContext<AppDbContext>(
+    opt => opt.UseSqlServer(conn),
+    contextLifetime: ServiceLifetime.Scoped,
+    optionsLifetime: ServiceLifetime.Singleton);
+
+// ===== AUTH =====
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = "DbToken";
+        options.DefaultChallengeScheme = "DbToken";
+    })
+    .AddScheme<AuthenticationSchemeOptions, DbTokenAuthenticationHandler>("DbToken", _ => { });
+
+builder.Services.AddAuthorization();
+
+// ===== CACHING =====
+builder.Services.AddMemoryCache();
+
+// ===== REPOS & SERVICES =====
+builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<IShopRepo, ShopRepo>();
+builder.Services.AddScoped<IPartnerRepo, PartnerRepo>();
+builder.Services.AddScoped<IChannelTokenRepo, ChannelTokenRepo>();
+
+builder.Services.AddScoped<ChannelTokenResolver>();
+
+builder.Services.AddScoped<ShopeeAuthProvider>();
+builder.Services.AddScoped<LazadaAuthProvider>();
+builder.Services.AddScoped<TiktokAuthProvider>();
+builder.Services.AddScoped<MarketplaceAuthService>();
+builder.Services.AddScoped<ShopeeAuthLinkService>();
+
+builder.Services.AddScoped<ShopeeOrderService>();
+builder.Services.AddScoped<LazadaOrderService>();
+builder.Services.AddScoped<TiktokOrderService>();
+builder.Services.AddScoped<ShopeeTokenRefreshService>();
+builder.Services.AddScoped<IShopeeOrderIngestRepo, ShopeeOrderIngestRepo>();
+builder.Services.AddScoped<ShopeeOrderIngestService>();
+
+// UnifiedOrder normalize layer
+builder.Services.AddScoped<IUnifiedOrderWriter, UnifiedOrderWriter>();
+builder.Services.AddScoped<OrderNormalizeService>();
+builder.Services.AddScoped<IIngestionAuditService, IngestionAuditService>();
+
+// Auth token provider (login)
+builder.Services.AddSingleton<IAuthTokenProvider, AuthTokenProvider>();
+
+// Background job
+builder.Services.AddHostedService<MarketJobHostedService>();
+
+// ===== HTTP CLIENTS =====
+builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds(30); });
+builder.Services.AddHttpClient("Lazada", c => { c.Timeout = TimeSpan.FromSeconds(30); });
+builder.Services.AddHttpClient("TikTok", c => { c.Timeout = TimeSpan.FromSeconds(30); });
+
+// สำหรับติดต่อ OrdersApi (ตั้ง BaseAddress จาก env/appsettings) + จูน handler
+builder.Services.AddHttpClient("OrdersApi", (sp, http) =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var baseUrl = Environment.GetEnvironmentVariable("ORDERS_BASE_URL")
+                  ?? cfg.GetValue<string>("OrdersApi:BaseUrl")
+                  ?? "https://localhost:7192";
+
+    http.BaseAddress = new Uri(baseUrl);
+    http.Timeout = TimeSpan.FromSeconds(90);
+    http.DefaultRequestHeaders.Accept.Clear();
+    http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+})
+.ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    };
+
+#if DEBUG
+    // เฉพาะ dev/local: อนุญาต self-signed ของ https://localhost:7192
+    handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (msg, cert, chain, errors) => true
+    };
+#endif
+
+    return handler;
+});
+
+// Controllers + จูน JSON (optional)
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.PropertyNamingPolicy = null; // คงชื่อ field ตาม model
+        o.JsonSerializerOptions.DefaultIgnoreCondition =
+            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull; // เขียน JSON แบบไม่รวม null
+        o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
+
+// ===== SWAGGER =====
+if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
+{
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(c =>
+    {
+        c.SwaggerDoc("v1", new OpenApiInfo { Title = "MDWAPI", Version = "v1" });
+        c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Description = "Enter token as: Bearer {your-token}",
+            Name = "Authorization",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "Token"
+        });
+        c.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            { new OpenApiSecurityScheme
+                { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
+              Array.Empty<string>() }
+        });
+    });
+}
+
+// ===== HEALTH CHECKS =====
+builder.Services.AddHealthChecks();
+
+var app = builder.Build();
+
+// seed admin
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.EnsureCreated();
+
+    if (!db.Users.Any(u => u.Username == "admin"))
+    {
+        db.Users.Add(new User
+        {
+            Username = "admin",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("123456yjm")
+        });
+        db.SaveChanges();
+    }
+}
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
+// ถ้ารันหลัง reverse proxy ให้เปิด ForwardedHeaders (ปรับได้ตาม infra)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
+
+if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.MapHealthChecks("/health");
+
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();

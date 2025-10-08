@@ -1,0 +1,20 @@
+-- Optional helper if you want to precreate tables manually.
+CREATE TABLE Users(
+    Id INT IDENTITY(1,1) PRIMARY KEY,
+    Username NVARCHAR(100) NOT NULL UNIQUE,
+    FullName NVARCHAR(200) NULL,
+    PasswordHash NVARCHAR(300) NOT NULL,
+    IsActive BIT NOT NULL DEFAULT 1,
+    CreatedAtUtc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+CREATE TABLE UserTokens(
+    Id INT IDENTITY(1,1) PRIMARY KEY,
+    UserId INT NOT NULL,
+    Token NVARCHAR(256) NOT NULL UNIQUE,
+    IssuedAtUtc DATETIME2 NOT NULL,
+    ExpiresAtUtc DATETIME2 NOT NULL,
+    RevokedAtUtc DATETIME2 NULL,
+    IsActive BIT NOT NULL DEFAULT 1,
+    CONSTRAINT FK_UserTokens_Users FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+);
