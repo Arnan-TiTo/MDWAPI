@@ -14,15 +14,19 @@ public class ShopeeOrderService
     private readonly ChannelTokenResolver _resolver;
     private readonly ILogger<ShopeeOrderService> _log;
 
-    // ใช้ได้ทั้ง get_order_detail และ get_order_list
-    private static readonly string ResponseOptionalFields = string.Join(",",
-        "buyer_username", "recipient_address", "payment_method", "buyer_user_id", "cod",
-        "estimated_shipping_fee", "days_to_ship", "item_list", "package_list", "note",
-        "note_update_time", "message_to_seller", "region", "reverse_shipping_fee",
-        "actual_shipping_fee_confirmed", "invoice_data", "order_status", "pickup_done_time",
-        "pay_time", "shipping_carrier", "total_amount", "create_time", "update_time",
-        "dropshipper", "dropshipper_phone", "fulfillment_flag"
-    );
+    private static class ShopeeOptionalFields
+    {
+        // ใช้กับ get_order_detail เท่านั้น
+        public const string Detail =
+            "buyer_username,recipient_address,payment_method,buyer_user_id,cod," +
+            "estimated_shipping_fee,days_to_ship,item_list,package_list,note," +
+            "note_update_time,message_to_seller,region,reverse_shipping_fee," +
+            "actual_shipping_fee_confirmed,invoice_data,order_status,pickup_done_time," +
+            "pay_time,shipping_carrier,total_amount,create_time,update_time," +
+            "dropshipper,dropshipper_phone,fulfillment_flag,ship_by_date,split_up,currency";
+        // get_order_list: อย่าส่งฟิลด์ที่ list ไม่รองรับ (ปลอดภัยสุด: ไม่ต้องส่ง)
+        public const string List = "order_status,create_time,update_time";
+    }
 
     public ShopeeOrderService(
         IHttpClientFactory http,
@@ -40,7 +44,6 @@ public class ShopeeOrderService
 
     // ====== Public APIs (Raw string JSON) ======
 
-    // 1) ไม่ต้องมีออเดอร์: ใช้เทสสิทธิ์/ลายเซ็นได้
     public async Task<string> GetShopProfileRawAsync(long shopId, CancellationToken ct = default)
     {
         var (url, http) = await BuildSignedGetAsync(
@@ -59,7 +62,6 @@ public class ShopeeOrderService
         return body;
     }
 
-    // 2) ไม่ต้องมีออเดอร์ก็เรียกได้ (จะได้ลิสต์ว่าง)
     public async Task<string> GetLogisticsChannelListRawAsync(long shopId, CancellationToken ct = default)
     {
         var (url, http) = await BuildSignedGetAsync(
@@ -78,7 +80,7 @@ public class ShopeeOrderService
         return body;
     }
 
-    // 3) ต้องมี order_sn จริง
+    // detail
     public async Task<string> GetOrderDetailRawAsync(long shopId, string orderSn, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(orderSn))
@@ -91,7 +93,7 @@ public class ShopeeOrderService
             {
                 ["order_sn_list"] = orderSn,
                 ["request_order_status_pending"] = "true",
-                ["response_optional_fields"] = ResponseOptionalFields
+                ["response_optional_fields"] = ShopeeOptionalFields.Detail
             },
             ct: ct);
 
@@ -105,7 +107,7 @@ public class ShopeeOrderService
         return body;
     }
 
-    // 4) ดึงลิสต์ออเดอร์ (จะว่างถ้าไม่มี)
+    // list
     public async Task<string> GetOrderListRawAsync(
         long shopId,
         string timeRangeField,
@@ -125,6 +127,9 @@ public class ShopeeOrderService
             ["time_from"] = timeFrom.ToString(),
             ["time_to"] = timeTo.ToString(),
             ["page_size"] = pageSize.ToString()
+            // ปลอดภัยสุด: ไม่ส่ง response_optional_fields สำหรับ list
+            // ถ้าจำเป็นจริงๆ ให้ใช้เฉพาะที่รองรับ เช่น:
+            // ["response_optional_fields"] = ShopeeOptionalFields.List
         };
         if (!string.IsNullOrWhiteSpace(cursor)) query["cursor"] = cursor;
         if (!string.IsNullOrWhiteSpace(orderStatus)) query["order_status"] = orderStatus;
@@ -145,7 +150,7 @@ public class ShopeeOrderService
         return body;
     }
 
-    // ====== Internal: สร้าง URL เซ็น + HttpClient ======
+    // ====== Internal: signed URL ======
 
     private async Task<(string url, HttpClient http)> BuildSignedGetAsync(
         string apiPath,
@@ -153,18 +158,15 @@ public class ShopeeOrderService
         Dictionary<string, string?>? extraQuery,
         CancellationToken ct)
     {
-        // 1) map FE shopId -> partnersId/accountIdBig
         var (partnersId, accountIdBig, _) = await _shopRepo.GetShopBindingAsync(shopId, ct);
         if (accountIdBig is null || accountIdBig.Value != shopId)
             _log.LogDebug("Shop binding accountIdBig mismatch. input={Input} bound={Bound}", shopId, accountIdBig);
 
-        // 2) โหลด partner config
         var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
                   ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
         if (cfg.PartnerId is null || string.IsNullOrWhiteSpace(cfg.PartnerKey))
             throw new InvalidOperationException("Shopee PartnerId/PartnerKey is required");
 
-        // 3) ดึง access_token ปัจจุบัน + env + host
         var (accessToken, tokenEnv, _, _) = await _resolver.GetAccessTokenAsync(
             channel: "shopee",
             environment: cfg.Environment,
@@ -177,7 +179,6 @@ public class ShopeeOrderService
         var host = _resolver.HostFor("shopee", tokenEnv);
         var ts = UnixTime.NowSeconds();
 
-        // 4) เซ็นแบบ shop-level
         var sign = ShopeeSign.BuildShopSign(
             partnerId: cfg.PartnerId.Value,
             partnerKey: cfg.PartnerKey!,
@@ -185,7 +186,7 @@ public class ShopeeOrderService
             timestamp: ts,
             accessToken: accessToken,
             shopId: shopId,
-            mode: ShopeeKeyMode.RawString   // ระบุชื่อพารามิเตอร์ให้ชัด ป้องกันสลับลำดับ
+            mode: ShopeeKeyMode.RawString
         );
 
         var baseQuery = new Dictionary<string, string?>
@@ -202,9 +203,7 @@ public class ShopeeOrderService
 
         var url = QueryHelpers.AddQueryString($"{host}{apiPath}", baseQuery);
 
-        // HttpClient ตามชื่อ client เดิม
         var http = _http.CreateClient(ClientName);
-        // ไม่จำเป็นต้องตั้ง BaseAddress ก็ได้ เพราะเรา call ด้วย absolute URL
         return (url, http);
     }
 }

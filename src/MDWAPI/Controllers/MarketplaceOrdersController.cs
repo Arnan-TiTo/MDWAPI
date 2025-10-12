@@ -8,11 +8,8 @@ namespace MDWAPI.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/market/orders")]
-
-
 public class MarketplaceOrdersController : ControllerBase
 {
-    // อ้างอิง Service ของแต่ละแพลตฟอร์ม
     private readonly ShopeeOrderService _shopee;
     private readonly LazadaOrderService _lazada;
     private readonly TiktokOrderService _tiktok;
@@ -22,7 +19,6 @@ public class MarketplaceOrdersController : ControllerBase
         ShopeeOrderService shopee,
         LazadaOrderService lazada,
         TiktokOrderService tiktok,
-
         ILogger<MarketplaceOrdersController> log)
     {
         _shopee = shopee;
@@ -31,8 +27,6 @@ public class MarketplaceOrdersController : ControllerBase
         _log = log;
     }
 
-
-    // GET /api/market/shopee/shop-info?shopId=225987929
     [HttpGet("shop-info")]
     public async Task<IActionResult> GetShopInfo([FromQuery] long shopId, CancellationToken ct)
     {
@@ -40,16 +34,13 @@ public class MarketplaceOrdersController : ControllerBase
         return Content(json, "application/json");
     }
 
-
-    // ดึงรายละเอียดออเดอร์แบบรวมแพลตฟอร์ม
-    // Shopee:   orderRef = order_sn
-    // Lazada:   orderRef = order_id
-    // TikTok:   orderRef = order_id
+    // GET /api/market/orders/detail?platform=Shopee&shopId=...&orderRef=...&responseOptionalFields=total_amount,reverse_shipping_fee
     [HttpGet("detail")]
     public async Task<IActionResult> GetOrderDetail(
         [FromQuery] Platform platform,
         [FromQuery] long shopId,
         [FromQuery] string orderRef,
+        [FromQuery] string? responseOptionalFields,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(orderRef))
@@ -77,10 +68,7 @@ public class MarketplaceOrdersController : ControllerBase
         }
     }
 
-    // ดึงรายการออเดอร์แบบรวมแพลตฟอร์ม
-    // Shopee: timeRangeField + timeFrom/timeTo (Unix seconds), pageSize, cursor, status
-    // Lazada: createdAfterIso/createdBeforeIso (ISO-8601 + timezone), offset, limit, status
-    // TikTok: timeFrom/timeTo (Unix seconds), pageSize, cursor, status
+    // GET /api/market/orders/list?platform=Shopee&...&responseOptionalFields=...
     [HttpGet("list")]
     public async Task<IActionResult> GetOrderList(
         [FromQuery] Platform platform,
@@ -95,6 +83,7 @@ public class MarketplaceOrdersController : ControllerBase
         [FromQuery] int? pageSize,
         [FromQuery] string? cursor,
         [FromQuery] string? status,
+        [FromQuery] string? responseOptionalFields,
         CancellationToken ct)
     {
         switch (platform)
@@ -107,13 +96,12 @@ public class MarketplaceOrdersController : ControllerBase
                     var json = await _shopee.GetOrderListRawAsync(
                         shopId: shopId,
                         timeRangeField: timeRangeField!,
-                        timeFrom: timeFrom!.Value,
-                        timeTo: timeTo!.Value,
+                        timeFrom: timeFrom.Value,
+                        timeTo: timeTo.Value,
                         pageSize: pageSize ?? 50,
                         cursor: cursor,
                         orderStatus: status,
                         ct: ct);
-
                     return Content(json, "application/json");
                 }
 
@@ -130,7 +118,6 @@ public class MarketplaceOrdersController : ControllerBase
                         limit: limit ?? 50,
                         status: status,
                         ct: ct);
-
                     return Content(json, "application/json");
                 }
 
@@ -141,13 +128,12 @@ public class MarketplaceOrdersController : ControllerBase
 
                     var json = await _tiktok.GetOrderListRawAsync(
                         shopId: shopId,
-                        timeFrom: timeFrom!.Value,
-                        timeTo: timeTo!.Value,
+                        timeFrom: timeFrom.Value,
+                        timeTo: timeTo.Value,
                         pageSize: pageSize ?? 50,
                         cursor: cursor,
                         status: status,
                         ct: ct);
-
                     return Content(json, "application/json");
                 }
 
@@ -156,8 +142,7 @@ public class MarketplaceOrdersController : ControllerBase
         }
     }
 
-    // ดึงรายการสินค้าในคำสั่งซื้อ (Lazada — Shopee)
-    // Lazada: orderRef = order_id
+    // Lazada only (ตามของเดิม)
     [HttpGet("items")]
     public async Task<IActionResult> GetOrderItems(
         [FromQuery] Platform platform,

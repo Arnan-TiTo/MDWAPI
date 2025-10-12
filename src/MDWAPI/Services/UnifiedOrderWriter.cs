@@ -4,6 +4,7 @@ using MDWAPI.Data;
 using MDWAPI.DTOs;
 using MDWAPI.Entities;
 using MDWAPI.Models;
+using MDWAPI.Normalization;  // << ใช้ ShopeeNormalizer
 using Microsoft.EntityFrameworkCore;
 
 namespace MDWAPI.Services;
@@ -91,7 +92,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         {
             var a = new UnifiedOrderAddresses
             {
-                Type = "SHIPPING",
+                Type = "ShipTo",
                 Name = dto.ShipTo.Name,
                 Phone = dto.ShipTo.Phone,
                 Email = dto.ShipTo.Email,
@@ -112,7 +113,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         {
             var a = new UnifiedOrderAddresses
             {
-                Type = "BILLING",
+                Type = "BillTo",
                 Name = dto.BillTo.Name,
                 Phone = dto.BillTo.Phone,
                 Email = dto.BillTo.Email,
@@ -139,7 +140,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
                 ShopId = dto.ShopId,
                 SellerId = dto.SellerId,
                 ExternalOrderId = dto.ExternalOrderId,
-                ExternalOrderNo = dto.ExternalOrderNo,
+                ExternalOrderNo = dto.ExternalOrderNo ?? dto.ExternalOrderId,
                 OrderStatus = dto.OrderStatus,
                 FulfillmentStatus = dto.FulfillmentStatus,
                 PaymentStatus = dto.PaymentStatus,
@@ -181,6 +182,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             _db.Add(h);
             await _db.SaveChangesAsync(ct);
 
+            // children
             if (dto.Items is not null)
             {
                 foreach (var it in dto.Items)
@@ -255,6 +257,8 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             // ===== UPDATE (hash เปลี่ยน) =====
             if (shipAddrId.HasValue) existed.ShipToAddressId = shipAddrId;
             if (billAddrId.HasValue) existed.BillToAddressId = billAddrId;
+
+            existed.ExternalOrderNo = dto.ExternalOrderNo ?? dto.ExternalOrderId ?? existed.ExternalOrderNo;
 
             existed.OrderStatus = dto.OrderStatus;
             existed.FulfillmentStatus = dto.FulfillmentStatus;
@@ -377,17 +381,54 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
     // Upsert from RAW (Shopee/TikTok/Lazada)
     // =========================
 
-    public Task<NormalizeResult> UpsertFromShopeeRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
-        => UpsertFromRawGenericAsync(
-            channel: "Shopee",
-            shopId: shopId,
-            sellerId: sellerId,
-            externalOrderId: ExtractShopeeExternalId(rawJson),
-            rawJson: rawJson,
-            batchNo: batchNo,
-            ct: ct
-        );
+    // >>>>>>> UPDATED: Shopee ใช้ Normalizer จริง <<<<<<<
+    public async Task<NormalizeResult> UpsertFromShopeeRawAsync(
+        long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
+    {
+        // hash & external id
+        var hash = ComputeHash(rawJson);
+        string externalOrderId = ExtractShopeeExternalId(rawJson);
 
+        // เช็ค outcome ล่วงหน้าจาก UnifiedOrders.SourcePayloadHash
+        var existed = await _db.UnifiedOrders
+            .Where(u => u.Channel == "Shopee" && u.ExternalOrderId == externalOrderId)
+            .Select(u => new { u.UnifiedOrderId, u.SourcePayloadHash })
+            .FirstOrDefaultAsync(ct);
+
+        if (existed is not null &&
+            existed.SourcePayloadHash is not null &&
+            existed.SourcePayloadHash.SequenceEqual(hash))
+        {
+            // payload เดิมเป๊ะ → Unchanged
+            return new NormalizeResult
+            {
+                Outcome = NormalizeOutcome.Unchanged,
+                UnifiedOrderId = existed.UnifiedOrderId,
+                ExternalOrderId = externalOrderId,
+                RawHash = hash
+            };
+        }
+
+        // Insert RAW (กันซ้ำด้วย hash)
+        var rawId = await InsertRawAsync("Shopee", shopId, sellerId, externalOrderId, rawJson, batchNo, ct);
+
+        // Normalize → DTO (เต็ม)
+        using var doc = JsonDocument.Parse(rawJson);
+        var dto = ShopeeNormalizer.Normalize(doc.RootElement, shopId, sellerId, rawId, rawJson, batchNo);
+
+        // Upsert
+        var unifiedId = await UpsertAsync(dto, ct);
+
+        return new NormalizeResult
+        {
+            Outcome = existed is null ? NormalizeOutcome.Created : NormalizeOutcome.Updated,
+            UnifiedOrderId = unifiedId,
+            ExternalOrderId = externalOrderId,
+            RawHash = hash
+        };
+    }
+
+    // (ยังคง generic minimal สำหรับแพลตฟอร์มอื่น จนกว่าจะทำ normalizer ของมัน)
     public Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
         => UpsertFromRawGenericAsync(
             channel: "TikTok",
@@ -410,7 +451,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             ct: ct
         );
 
-    // ---- Generic flow for 3 platforms ----
+    // ---- Generic flow (fallback) ----
     private async Task<NormalizeResult> UpsertFromRawGenericAsync(
         string channel,
         long? shopId,
@@ -422,7 +463,6 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
     {
         var hash = ComputeHash(rawJson);
 
-        // ตรวจสถานะก่อน เพื่อสรุป outcome ที่ถูกต้อง
         var existed = await _db.UnifiedOrders
             .Where(u => u.Channel == channel && u.ExternalOrderId == externalOrderId)
             .Select(u => new { u.UnifiedOrderId, u.SourcePayloadHash })
@@ -432,7 +472,6 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             existed.SourcePayloadHash is not null &&
             existed.SourcePayloadHash.SequenceEqual(hash))
         {
-            // hash เดิม → ไม่ต้องทำอะไร
             return new NormalizeResult
             {
                 Outcome = NormalizeOutcome.Unchanged,
@@ -442,13 +481,9 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             };
         }
 
-        // Insert/Reuse RAW แถว (กันซ้ำด้วย hash)
         var rawId = await InsertRawAsync(channel, shopId, sellerId, externalOrderId, rawJson, batchNo, ct);
 
-        // สร้าง DTO แบบ minimal (ถ้ายังไม่มี mapper รายละเอียด)
         var dto = BuildMinimalDto(channel, shopId, sellerId, externalOrderId, rawId, hash, batchNo);
-
-        // Upsert ลง unified
         var unifiedId = await UpsertAsync(dto, ct);
 
         return new NormalizeResult
@@ -473,7 +508,17 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         var r = doc.RootElement;
         if (r.TryGetProperty("order_sn", out var a) && a.ValueKind == JsonValueKind.String) return a.GetString()!;
         if (r.TryGetProperty("orderSn", out var b) && b.ValueKind == JsonValueKind.String) return b.GetString()!;
-        throw new ArgumentException("Shopee raw: missing order_sn/orderSn");
+        // กรณี payload ถูกห่อชั้นนอก ให้ลอง response.order_list[0]
+        if (r.TryGetProperty("response", out var resp) && resp.ValueKind == JsonValueKind.Object)
+        {
+            if (resp.TryGetProperty("order_list", out var arr) && arr.ValueKind == JsonValueKind.Array && arr.GetArrayLength() > 0)
+            {
+                var o0 = arr[0];
+                if (o0.TryGetProperty("order_sn", out var osn) && osn.ValueKind == JsonValueKind.String)
+                    return osn.GetString()!;
+            }
+        }
+        throw new ArgumentException("Shopee raw: missing order_sn");
     }
 
     private static string ExtractTiktokExternalId(string rawJson)
@@ -514,7 +559,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             ShopId = shopId,
             SellerId = sellerId,
             ExternalOrderId = externalOrderId,
-            // ค่าอื่น ๆ ให้เป็น null ได้ — mapper รายละเอียดสามารถเติมในชั้นที่สูงกว่าได้
+            ExternalOrderNo = externalOrderId,
             Items = new List<UnifiedOrderItem>(),
             Payments = new List<UnifiedPayment>(),
             Shipments = new List<UnifiedShipment>(),

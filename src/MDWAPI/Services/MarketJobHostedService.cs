@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Headers;
+using System.Globalization;
 using MDWAPI.Data;
 using MDWAPI.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -31,7 +32,6 @@ public class MarketJobHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // อ่าน PollInterval จาก config (ดีฟอลต์ 15s, ขั้นต่ำ 5s)
         var pollCfg = _cfg["Jobs:PollInterval"];
         var interval = TimeSpan.FromSeconds(15);
         if (!string.IsNullOrWhiteSpace(pollCfg) && TimeSpan.TryParse(pollCfg, out var ts))
@@ -41,7 +41,6 @@ public class MarketJobHostedService : BackgroundService
 
         var timer = new PeriodicTimer(interval);
 
-        // รันหนึ่งครั้งทันทีเมื่อสตาร์ท (optional)
         try { await RunOnceAsync(interval, stoppingToken); }
         catch (Exception ex) { _logger.LogError(ex, "Initial run failed"); }
 
@@ -75,11 +74,12 @@ public class MarketJobHostedService : BackgroundService
                 if (string.IsNullOrWhiteSpace(path)) continue;
 
                 var baseQs = (j.Value3 ?? "").Trim().TrimStart('?');
-                var (fromEpoch, toEpoch, remember) = BuildWindow(nowBkk, j.Value4, j.Value5);
-                var finalQs = MergeQuery(baseQs, fromEpoch, toEpoch);
+
+                // สร้างหน้าต่างเวลาแบบ backfill + chunk + overlap (ทั้งหมดใน BKK time)
+                var windows = BuildWindows(nowBkk, j.Value4, j.Value5);
+                if (windows.Count == 0) continue;
 
                 var client = _httpFactory.CreateClient("OrdersApi");
-                // Bearer: login /api/Auth/login (cache ใน AuthTokenProvider)
                 var bearer = await _tokenProvider.GetBearerAsync(ct);
                 if (!string.IsNullOrWhiteSpace(bearer))
                 {
@@ -87,15 +87,30 @@ public class MarketJobHostedService : BackgroundService
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
                 }
 
-                using var resp = await client.PostAsync(path + "?" + finalQs, content: null, ct);
-                var body = await resp.Content.ReadAsStringAsync(ct);
+                long finalTo = 0;
+                foreach (var w in windows)
+                {
+                    var finalQs = MergeQuery(baseQs, w.FromEpoch, w.ToEpoch);
 
-                _logger.LogInformation("Job [{id}:{name}] {status} POST {path}?{qs} | {body}",
-                    j.Id, j.Name, (int)resp.StatusCode, path, finalQs, Trunc(body, 400));
+                    using var resp = await client.PostAsync(path + "?" + finalQs, content: null, ct);
+                    var body = await resp.Content.ReadAsStringAsync(ct);
 
-                // อัปเดต timestamp และ state (Value5 = lastTo) หาก remember
+                    _logger.LogInformation(
+                        "Job [{id}:{name}] {status} POST {path}?{qs} | windowUTC {fromUtc}->{toUtc} | len={len}",
+                        j.Id, j.Name, (int)resp.StatusCode, path, finalQs,
+                        DateTimeOffset.FromUnixTimeSeconds(w.FromEpoch).UtcDateTime,
+                        DateTimeOffset.FromUnixTimeSeconds(w.ToEpoch).UtcDateTime,
+                        body?.Length ?? 0);
+
+                    finalTo = w.ToEpoch;
+                }
+
+                // อัปเดต timestamp และ watermark ถ้ามี remember
+                var behavior = ParseBehavior(j.Value4);
                 j.UpdatedAt = DateTime.UtcNow;
-                if (remember) j.Value5 = toEpoch.ToString();
+                if (behavior.Remember && finalTo > 0)
+                    j.Value5 = finalTo.ToString(CultureInfo.InvariantCulture);
+
                 await db.SaveChangesAsync(ct);
             }
             catch (Exception ex)
@@ -105,7 +120,7 @@ public class MarketJobHostedService : BackgroundService
         }
     }
 
-    // ====== DUE CHECK (รองรับ every:, HH:mm[,..], และ cron:NAME) ======
+    // ===== Scheduling =====
 
     private static bool IsDue(Misc job, DateTime nowBkk, TimeSpan pollInterval, AppDbContext db)
     {
@@ -113,10 +128,9 @@ public class MarketJobHostedService : BackgroundService
         if (string.IsNullOrWhiteSpace(schedule)) return false;
 
         var lastBkk = ToBangkok(job.UpdatedAt);
-        var windowStart = lastBkk;                       // (lastRun .. now]  ป้องกันพลาดรอบ
-        var windowEnd = nowBkk + TimeSpan.FromSeconds(2); // +slack เล็กน้อย
+        var windowStart = lastBkk;
+        var windowEnd = nowBkk + TimeSpan.FromSeconds(2);
 
-        // --- A) ถ้าเป็น cron:NAME → lookup expression จาก dbo.Misc (type=cronjob) ---
         if (schedule.StartsWith("cron:", StringComparison.OrdinalIgnoreCase))
         {
             var name = schedule["cron:".Length..].Trim();
@@ -131,33 +145,26 @@ public class MarketJobHostedService : BackgroundService
             return CronIsDue(expr!.Trim(), windowStart, windowEnd);
         }
 
-        // --- B) ถ้าดูเหมือน cron expression (5 ฟิลด์คั่นด้วยช่องว่าง) → ประมวลผลตรง ๆ ---
         if (LooksLikeCron(schedule))
-        {
             return CronIsDue(schedule, windowStart, windowEnd);
-        }
 
-        // --- C) every:X (เช่น every:1m, every:30s, every:2h) ---
         if (schedule.StartsWith("every:", StringComparison.OrdinalIgnoreCase))
         {
             var span = ParseSpan(schedule["every:".Length..]);
             return (nowBkk - lastBkk) >= span;
         }
 
-        // --- D) fixed times "HH:mm,HH:mm" ---
         var times = schedule.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (times.Length > 0)
         {
             var days = new[] { nowBkk.Date.AddDays(-1), nowBkk.Date };
             foreach (var d in days)
-            {
                 foreach (var t in times)
                 {
                     if (!TimeSpan.TryParse(t, out var ts)) continue;
                     var due = d + ts;
                     if (due > windowStart && due <= windowEnd) return true;
                 }
-            }
         }
 
         return false;
@@ -165,23 +172,18 @@ public class MarketJobHostedService : BackgroundService
 
     private static bool LooksLikeCron(string s)
     {
-        // แบบง่าย: มี 5 ฟิลด์คั่นด้วยช่องว่าง และแต่ละฟิลด์มีเฉพาะตัวเลข * , - / ?
         if (string.IsNullOrWhiteSpace(s)) return false;
         var parts = s.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != 5) return false;
 
         foreach (var p in parts)
-        {
             foreach (var ch in p)
-            {
-                if (!(char.IsDigit(ch) || ch == '*' || ch == '/' || ch == '-' || ch == ',')) return false;
-            }
-        }
+                if (!(char.IsDigit(ch) || ch == '*' || ch == '/' || ch == '-' || ch == ','))
+                    return false;
+
         return true;
     }
 
-    // ====== CRON SUPPORT (5 ฟิลด์: m h dom mon dow) ======
-    // รองรับ: *, */n, a-b, a,b,c, ผสมกันได้; DOW: 0-6 (0/7 = Sunday)
     private static bool CronIsDue(string expr, DateTime windowStartBkk, DateTime windowEndBkk)
     {
         if (windowEndBkk <= windowStartBkk) return false;
@@ -195,25 +197,15 @@ public class MarketJobHostedService : BackgroundService
         var mon = ParseCronField(parts[3], 1, 12);
         var dow = ParseCronField(parts[4], 0, 7); // 0/7 = Sun
 
-        // iterate ทีละ 1 นาทีในช่วง window (ปกติมักไม่ยาวมาก)
-        // (ถ้าต้องรองรับ window ยาวหลายวัน สามารถกระโดดข้ามด้วย heuristic เพิ่มทีหลังได้)
         var t = new DateTime(windowStartBkk.Year, windowStartBkk.Month, windowStartBkk.Day, windowStartBkk.Hour, windowStartBkk.Minute, 0);
         if (t <= windowStartBkk) t = t.AddMinutes(1);
 
         while (t <= windowEndBkk)
         {
-            int m = t.Minute;
-            int h = t.Hour;
-            int month = t.Month;
-            int day = t.Day;
-            int dayOfWeek = (int)t.DayOfWeek; // 0=Sunday
-
-            // DOW อนุญาต 0 หรือ 7 เป็น Sunday
+            int m = t.Minute, h = t.Hour, month = t.Month, day = t.Day, dayOfWeek = (int)t.DayOfWeek;
             bool dowMatch = dow.Contains(dayOfWeek) || (dayOfWeek == 0 && dow.Contains(7));
-
             if (minutes.Contains(m) && hours.Contains(h) && dom.Contains(day) && mon.Contains(month) && dowMatch)
                 return true;
-
             t = t.AddMinutes(1);
         }
         return false;
@@ -222,11 +214,7 @@ public class MarketJobHostedService : BackgroundService
     private static HashSet<int> ParseCronField(string field, int min, int maxInclusive)
     {
         var set = new HashSet<int>();
-        if (field == "*")
-        {
-            for (int i = min; i <= maxInclusive; i++) set.Add(i);
-            return set;
-        }
+        if (field == "*") { for (int i = min; i <= maxInclusive; i++) set.Add(i); return set; }
 
         foreach (var token in field.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -241,27 +229,17 @@ public class MarketJobHostedService : BackgroundService
                 {
                     var rs = rangePart.Split('-', 2);
                     if (rs.Length == 2 && int.TryParse(rs[0], out var a) && int.TryParse(rs[1], out var b))
-                    {
-                        start = Math.Max(min, Math.Min(a, b));
-                        end = Math.Min(maxInclusive, Math.Max(a, b));
-                    }
+                    { start = Math.Max(min, Math.Min(a, b)); end = Math.Min(maxInclusive, Math.Max(a, b)); }
                     else if (int.TryParse(rangePart, out var single))
-                    {
-                        start = Math.Max(min, Math.Min(single, maxInclusive));
-                        end = start;
-                    }
+                    { start = Math.Max(min, Math.Min(single, maxInclusive)); end = start; }
                 }
                 for (int i = start; i <= end; i += step) set.Add(i);
             }
-            else if (token.Contains('-'))
+            else if (tokenContainsDash(token: token, out var a2, out var b2))
             {
-                var rs = token.Split('-', 2);
-                if (int.TryParse(rs[0], out var a) && int.TryParse(rs[1], out var b))
-                {
-                    int start = Math.Max(min, Math.Min(a, b));
-                    int end = Math.Min(maxInclusive, Math.Max(a, b));
-                    for (int i = start; i <= end; i++) set.Add(i);
-                }
+                int start = Math.Max(min, Math.Min(a2, b2));
+                int end = Math.Min(maxInclusive, Math.Max(a2, b2));
+                for (int i = start; i <= end; i++) set.Add(i);
             }
             else if (token == "*")
             {
@@ -274,46 +252,135 @@ public class MarketJobHostedService : BackgroundService
         }
 
         return set.Count > 0 ? set : new HashSet<int>(Enumerable.Range(min, maxInclusive - min + 1));
+
+        static bool tokenContainsDash(string token, out int a, out int b)
+        {
+            a = b = 0;
+            var rs = token.Split('-', 2);
+            if (rs.Length == 2 && int.TryParse(rs[0], out a) && int.TryParse(rs[1], out b))
+                return true;
+            return false;
+        }
     }
 
-    // ====== WINDOW BUILDER (เหมือนเดิม) ======
-    /// Value4 pattern:
-    ///  - "-10m"           => window 10 นาทีล่าสุด
-    ///  - "-10m;remember"  => และจำ lastTo ใส่ Value5
-    private static (long fromEpoch, long toEpoch, bool remember) BuildWindow(DateTime nowBkk, string? value4, string? value5)
+    // ===== Windows / Behavior =====
+
+    private record Behavior(TimeSpan Overlap, TimeSpan Chunk, bool Remember, DateTimeOffset? Backfill);
+
+    private static Behavior ParseBehavior(string? value4)
     {
+        var overlap = TimeSpan.FromMinutes(10);
+        var chunk = (TimeSpan.FromDays(15) - TimeSpan.FromSeconds(1)); // 14d 23:59:59
         var remember = false;
-        var toEpoch = ToEpoch(nowBkk);
-        var fromEpoch = toEpoch - 600; // default 10m
+        DateTimeOffset? backfill = null;
 
         var spec = (value4 ?? "").Trim();
-        if (!string.IsNullOrEmpty(spec))
+        if (string.IsNullOrEmpty(spec)) return new Behavior(overlap, chunk, remember, backfill);
+
+        foreach (var rawToken in spec.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (spec.Contains(';'))
+            var token = rawToken.Trim();
+
+            if (token.Equals("remember", StringComparison.OrdinalIgnoreCase))
             {
-                var parts = spec.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                spec = parts[0];
-                remember = parts.Any(p => p.Equals("remember", StringComparison.OrdinalIgnoreCase));
+                remember = true; continue;
             }
-            var span = ParseSpan(spec);
-            fromEpoch = ToEpoch(nowBkk - span);
-            toEpoch = ToEpoch(nowBkk);
+
+            if (token.StartsWith("chunk=", StringComparison.OrdinalIgnoreCase))
+            {
+                var v = token["chunk=".Length..].Trim();
+                if (v.EndsWith("d", true, CultureInfo.InvariantCulture) && int.TryParse(v[..^1], out var dd))
+                    chunk = TimeSpan.FromDays(dd);
+                else if (v.EndsWith("h", true, CultureInfo.InvariantCulture) && int.TryParse(v[..^1], out var hh))
+                    chunk = TimeSpan.FromHours(hh);
+                else if (v.EndsWith("m", true, CultureInfo.InvariantCulture) && int.TryParse(v[..^1], out var mm))
+                    chunk = TimeSpan.FromMinutes(mm);
+                continue;
+            }
+
+            if (token.StartsWith("backfill=", StringComparison.OrdinalIgnoreCase))
+            {
+                var v = token["backfill=".Length..].Trim();
+                if (long.TryParse(v, out var epoch) && epoch > 0)
+                    backfill = DateTimeOffset.FromUnixTimeSeconds(epoch);
+                else if (DateTimeOffset.TryParse(v, out var dt))
+                    backfill = dt;
+                continue;
+            }
+
+            // overlap literal: -10m / 10m / 2h / ...
+            var t = token;
+            if (t.StartsWith("-", StringComparison.Ordinal)) t = t[1..];
+            var span = ParseSpan(t);
+            overlap = span;
         }
 
-        if (remember && long.TryParse((value5 ?? "").Trim(), out var lastTo) && lastTo > 0)
+        return new Behavior(overlap, chunk, remember, backfill);
+    }
+
+    private sealed class Window { public long FromEpoch; public long ToEpoch; }
+
+    /// <summary>
+    /// คำนวณช่วงเวลาใน "Bangkok time" ให้เสร็จ แล้วค่อยแปลงเป็น Unix epoch ด้วย offset BKK
+    /// ถ้ามี watermark (Value5) → เริ่มที่ (watermark - overlap)
+    /// ถ้าไม่มี → เริ่มที่ backfill (หรือย้อนหลัง 90 วัน) แล้วตัดเป็น chunk
+    /// </summary>
+    private static List<Window> BuildWindows(DateTime nowBkk, string? value4, string? value5)
+    {
+        var behavior = ParseBehavior(value4);
+        var tz = GetBangkokTz();
+
+        // ตีความ watermark (เป็น epoch UTC) → แปลงเป็น BKK
+        bool hasWm = long.TryParse((value5 ?? "").Trim(), out var wmEpoch) && wmEpoch > 0;
+        DateTime startBkk;
+
+        if (hasWm)
         {
-            fromEpoch = lastTo + 1;
-            toEpoch = ToEpoch(nowBkk);
+            var wmUtc = DateTimeOffset.FromUnixTimeSeconds(wmEpoch); // UTC moment
+            var wmBkk = TimeZoneInfo.ConvertTime(wmUtc, tz);         // -> BKK
+            startBkk = wmBkk.DateTime.Add(-behavior.Overlap);
+        }
+        else
+        {
+            if (behavior.Backfill.HasValue)
+            {
+                var bfBkk = TimeZoneInfo.ConvertTime(behavior.Backfill.Value, tz);
+                startBkk = bfBkk.DateTime;
+            }
+            else
+            {
+                startBkk = nowBkk.AddDays(-90);
+            }
         }
 
-        return (fromEpoch, toEpoch, remember);
+        var endBkk = nowBkk;
+        if (endBkk <= startBkk) return new List<Window>();
+
+        var list = new List<Window>();
+        var cursor = startBkk;
+
+        while (cursor < endBkk)
+        {
+            var next = cursor.Add(behavior.Chunk);
+            if (next > endBkk) next = endBkk;
+
+            list.Add(new Window
+            {
+                FromEpoch = ToEpochFromBangkok(cursor),
+                ToEpoch = ToEpochFromBangkok(next)
+            });
+
+            cursor = next;
+        }
+
+        return list;
     }
 
     private static string MergeQuery(string baseQs, long fromEpoch, long toEpoch)
     {
         var dict = ToQueryDict(baseQs);
-        dict["timeFrom"] = fromEpoch.ToString();
-        dict["timeTo"] = toEpoch.ToString();
+        dict["timeFrom"] = fromEpoch.ToString(CultureInfo.InvariantCulture);
+        dict["timeTo"] = toEpoch.ToString(CultureInfo.InvariantCulture);
         return string.Join("&", dict.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
     }
 
@@ -331,6 +398,8 @@ public class MarketJobHostedService : BackgroundService
         }
         return d;
     }
+
+    // ===== Utilities (เวลา/ไทม์โซน) =====
 
     private static TimeSpan ParseSpan(string s)
     {
@@ -364,7 +433,34 @@ public class MarketJobHostedService : BackgroundService
         }
     }
 
-    private static long ToEpoch(DateTime localTime) => new DateTimeOffset(localTime).ToUnixTimeSeconds();
+    private static TimeZoneInfo GetBangkokTz()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("Asia/Bangkok");
+        }
+        catch
+        {
+#if WINDOWS
+            return TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time");
+#else
+            // Bangkok = UTC+7 (no DST)
+            return TimeZoneInfo.CreateCustomTimeZone("Asia/Bangkok_Fallback", TimeSpan.FromHours(7), "Bangkok", "Bangkok");
+#endif
+        }
+    }
 
-    private static string Trunc(string s, int max) => s.Length <= max ? s : s[..max] + "...";
+    /// <summary>
+    /// แปลง DateTime (ตีความว่าเป็น Bangkok time) → Unix epoch seconds อย่างถูกต้อง
+    /// </summary>
+    private static long ToEpochFromBangkok(DateTime localBkkTime)
+    {
+        var tz = GetBangkokTz();
+        // บังคับเป็น "Unspecified" เพื่อให้ offset มาจากโซน BKK เสมอ
+        var unspecified = DateTime.SpecifyKind(localBkkTime, DateTimeKind.Unspecified);
+        var dto = new DateTimeOffset(unspecified, tz.GetUtcOffset(unspecified));
+        return dto.ToUnixTimeSeconds();
+    }
+
+    private static string Trunc(string s, int max) => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "...";
 }
