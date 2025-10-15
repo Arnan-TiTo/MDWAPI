@@ -34,13 +34,14 @@ public class MarketplaceOrdersController : ControllerBase
         return Content(json, "application/json");
     }
 
-    // GET /api/market/orders/detail?platform=Shopee&shopId=...&orderRef=...&responseOptionalFields=total_amount,reverse_shipping_fee
+    // เพิ่ม shopCipher (ใช้เฉพาะ TikTok, ส่งค่าว่างได้)
     [HttpGet("detail")]
     public async Task<IActionResult> GetOrderDetail(
         [FromQuery] Platform platform,
         [FromQuery] long shopId,
         [FromQuery] string orderRef,
         [FromQuery] string? responseOptionalFields,
+        [FromQuery] string? shopCipher,       // <== NEW
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(orderRef))
@@ -60,7 +61,11 @@ public class MarketplaceOrdersController : ControllerBase
                 }
             case Platform.TikTok:
                 {
-                    var json = await _tiktok.GetOrderDetailRawAsync(shopId, orderRef, ct);
+                    var json = await _tiktok.GetOrderDetailRawAsync(
+                        shopId: shopId,
+                        orderRef: orderRef,
+                        shopCipher: shopCipher,  // <== pass through
+                        ct: ct);
                     return Content(json, "application/json");
                 }
             default:
@@ -68,7 +73,7 @@ public class MarketplaceOrdersController : ControllerBase
         }
     }
 
-    // GET /api/market/orders/list?platform=Shopee&...&responseOptionalFields=...
+    // เพิ่ม shopCipher (ใช้เฉพาะ TikTok, ส่งค่าว่างได้)
     [HttpGet("list")]
     public async Task<IActionResult> GetOrderList(
         [FromQuery] Platform platform,
@@ -84,6 +89,7 @@ public class MarketplaceOrdersController : ControllerBase
         [FromQuery] string? cursor,
         [FromQuery] string? status,
         [FromQuery] string? responseOptionalFields,
+        [FromQuery] string? shopCipher,       // <== NEW
         CancellationToken ct)
     {
         switch (platform)
@@ -130,9 +136,10 @@ public class MarketplaceOrdersController : ControllerBase
                         shopId: shopId,
                         timeFrom: timeFrom.Value,
                         timeTo: timeTo.Value,
-                        pageSize: pageSize ?? 50,
+                        pageSize: pageSize ?? 20,
                         cursor: cursor,
                         status: status,
+                        shopCipher: shopCipher,
                         ct: ct);
                     return Content(json, "application/json");
                 }
@@ -142,7 +149,6 @@ public class MarketplaceOrdersController : ControllerBase
         }
     }
 
-    // Lazada only (ตามของเดิม)
     [HttpGet("items")]
     public async Task<IActionResult> GetOrderItems(
         [FromQuery] Platform platform,

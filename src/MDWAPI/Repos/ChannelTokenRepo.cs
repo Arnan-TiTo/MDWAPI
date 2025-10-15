@@ -11,7 +11,6 @@ public class ChannelTokenRepo : IChannelTokenRepo
     private readonly AppDbContext _db;
     public ChannelTokenRepo(AppDbContext db) => _db = db;
 
-    // ใช้คอลัมน์เท่าที่ DTO ต้องการเท่านั้น
     private const string BaseColumns = @"
         Id, Channel, Environment, AuthType,
         PartnerId, AppKey,
@@ -42,9 +41,9 @@ WHERE Channel=@channel
   AND (@partnerId IS NULL OR PartnerId=@partnerId)
   AND (@appKey    IS NULL OR AppKey=@appKey)
   AND (
-        (@accountIdBig IS NOT NULL AND AccountIdBig=@accountIdBig)
-     OR (@accountIdStr IS NOT NULL AND AccountIdStr=@accountIdStr)
-      )
+       (@accountIdBig IS NOT NULL AND AccountIdBig=@accountIdBig) OR
+       (@accountIdStr IS NOT NULL AND AccountIdStr=@accountIdStr)
+  )
 ORDER BY AccessTokenExpAt DESC, Id DESC;";
 
         var conn = _db.Database.GetDbConnection();
@@ -82,6 +81,38 @@ ORDER BY UpdatedAt DESC, Id DESC;";
             return await conn.QuerySingleOrDefaultAsync<ChannelTokenDtos>(
                 new CommandDefinition(sql,
                     new { channel, env = environment, partnerId, accountIdBig },
+                    cancellationToken: ct));
+        }
+        finally { if (needClose) await conn.CloseAsync(); }
+    }
+
+    // ✅ ใหม่: สำหรับ TikTok ที่เก็บ AccountIdStr (shop_id) และเราอยากได้แถว “ล่าสุดที่มี refresh_token”
+    public async Task<ChannelTokenDtos?> GetLatestForRefreshByStrAsync(
+        string channel,
+        string environment,
+        string? appKey,
+        string accountIdStr,
+        CancellationToken ct)
+    {
+        var sql = $@"
+SELECT TOP(1) {BaseColumns}
+FROM mdw.ChannelTokens
+WHERE Channel=@channel
+  AND Environment=@env
+  AND isActive=1
+  AND (@appKey IS NULL OR AppKey=@appKey)
+  AND AccountIdStr=@accountIdStr
+  AND RefreshToken IS NOT NULL AND LEN(RefreshToken) > 0
+ORDER BY UpdatedAt DESC, Id DESC;";
+
+        var conn = _db.Database.GetDbConnection();
+        var needClose = conn.State != ConnectionState.Open;
+        if (needClose) await conn.OpenAsync(ct);
+        try
+        {
+            return await conn.QuerySingleOrDefaultAsync<ChannelTokenDtos>(
+                new CommandDefinition(sql,
+                    new { channel, env = environment, appKey, accountIdStr },
                     cancellationToken: ct));
         }
         finally { if (needClose) await conn.CloseAsync(); }

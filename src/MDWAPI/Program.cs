@@ -1,22 +1,23 @@
 ﻿using MDWAPI.Auth;
 using MDWAPI.Data;
 using MDWAPI.Entities;
+using MDWAPI.Helpers;
 using MDWAPI.Models;
 using MDWAPI.Repos;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using System.Net;
 using System.Net.Http.Headers;
-using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
-  //?? "Server=localhost;Database=imw;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+  //?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+  ?? "Server=localhost;Database=imw;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
 builder.Services.AddDbContext<AppDbContext>(
@@ -49,12 +50,17 @@ builder.Services.AddScoped<ChannelTokenResolver>();
 builder.Services.AddScoped<ShopeeAuthProvider>();
 builder.Services.AddScoped<LazadaAuthProvider>();
 builder.Services.AddScoped<TiktokAuthProvider>();
+
 builder.Services.AddScoped<MarketplaceAuthService>();
 builder.Services.AddScoped<ShopeeAuthLinkService>();
+builder.Services.AddTransient<LazadaAuthLinkService>();
+builder.Services.AddTransient<TiktokAuthLinkService>();
 
 builder.Services.AddScoped<ShopeeOrderService>();
 builder.Services.AddScoped<LazadaOrderService>();
 builder.Services.AddScoped<TiktokOrderService>();
+builder.Services.AddHttpClient<TikTokAuthService>();
+
 builder.Services.AddScoped<ShopeeTokenRefreshService>();
 builder.Services.AddScoped<IShopeeOrderIngestRepo, ShopeeOrderIngestRepo>();
 builder.Services.AddScoped<ShopeeOrderIngestService>();
@@ -75,14 +81,20 @@ builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds
 builder.Services.AddHttpClient("Lazada", c => { c.Timeout = TimeSpan.FromSeconds(30); });
 builder.Services.AddHttpClient("TikTok", c => { c.Timeout = TimeSpan.FromSeconds(30); });
 
+builder.Services.AddHttpClient("TikTokAuth", c =>
+{
+    c.BaseAddress = new Uri("https://auth.tiktok-shops.com");
+    c.Timeout = TimeSpan.FromSeconds(30);
+});
+
 // สำหรับติดต่อ OrdersApi (ตั้ง BaseAddress จาก env/appsettings) + จูน handler
 builder.Services.AddHttpClient("OrdersApi", (sp, http) =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
     var baseUrl = Environment.GetEnvironmentVariable("ORDERS_BASE_URL")
                   ?? cfg.GetValue<string>("OrdersApi:BaseUrl")
-                  ?? "https://madewe.vibeandchic.com";
-                  //?? "https://localhost:7192";
+                  //?? "https://madewe.vibeandchic.com";
+                  ?? "https://localhost:7192";
 
     http.BaseAddress = new Uri(baseUrl);
     http.Timeout = TimeSpan.FromSeconds(90);

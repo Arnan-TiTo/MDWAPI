@@ -21,6 +21,14 @@ namespace MDWAPI.Repos
             long accountIdBig,
             CancellationToken ct);
 
+        // ✅ ใหม่: สำหรับแพลตฟอร์มที่ใช้ accountIdStr (เช่น TikTok)
+        Task<ChannelTokenDtos?> GetLatestForRefreshByStrAsync(
+            string channel,
+            string environment,
+            string? appKey,
+            string accountIdStr,
+            CancellationToken ct);
+
         Task UpsertAsync(ChannelTokenDtos row, CancellationToken ct);
     }
 }

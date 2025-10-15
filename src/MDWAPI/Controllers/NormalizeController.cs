@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Linq;
 
 namespace MDWAPI.Controllers;
 
@@ -26,8 +27,6 @@ public class NormalizeController : ControllerBase
         _cache = cache;
         _log = log;
     }
-
-    // … (ส่วน POST /shopee | /tiktok | /lazada คงไว้ตามเดิม) …
 
     // -----------------
     // 2) by-ref
@@ -86,10 +85,8 @@ public class NormalizeController : ControllerBase
         List<string> natives;
         using (var doc = JsonDocument.Parse(json))
         {
-            // ตรวจ error payload
-            if (doc.RootElement.TryGetProperty("error", out var errEl) &&
-                errEl.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(errEl.GetString()))
+            // รองรับ error รูปแบบต่าง ๆ
+            if (HasExplicitError(doc.RootElement))
             {
                 await audit.AddItemAsync(transId, new UnifiedOrderTransItem
                 {
@@ -101,17 +98,36 @@ public class NormalizeController : ControllerBase
                 return BadRequest(new { message = "detail returned error", detailUrl, payload = json, batchNo = trans.BatchNo });
             }
 
-            var roots = string.IsNullOrWhiteSpace(select) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, select);
+            // default selector สำหรับ TikTok
+            var effSelect = select;
+            if (string.IsNullOrWhiteSpace(effSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                effSelect = "data.orders.0";
+
+            var roots = string.IsNullOrWhiteSpace(effSelect) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, effSelect);
             natives = ExtractNativeOrdersInDoc(platform, roots);
 
-            if (natives.Count == 0 && platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+            // Fallbacks: Shopee / TikTok
+            if (natives.Count == 0)
             {
-                foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
                 {
-                    var gs = SelectPathInDoc(doc.RootElement, g);
-                    if (gs.Count == 0) continue;
-                    natives = ExtractNativeOrdersInDoc(platform, gs);
-                    if (natives.Count > 0) break;
+                    foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                    {
+                        var gs = SelectPathInDoc(doc.RootElement, g);
+                        if (gs.Count == 0) continue;
+                        natives = ExtractNativeOrdersInDoc(platform, gs);
+                        if (natives.Count > 0) break;
+                    }
+                }
+                else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var g in new[] { "data.orders.0", "data.orders", "orders", "data" })
+                    {
+                        var gs = SelectPathInDoc(doc.RootElement, g);
+                        if (gs.Count == 0) continue;
+                        natives = ExtractNativeOrdersInDoc(platform, gs);
+                        if (natives.Count > 0) break;
+                    }
                 }
             }
         }
@@ -227,78 +243,109 @@ public class NormalizeController : ControllerBase
 
         await RefreshTokenIfNeededAsync(platform, shopId ?? 0, sellerId, env, ct);
 
-        var listUrl = $"/api/market/orders/list?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&timeRangeField={Uri.EscapeDataString(timeRangeField)}&timeFrom={timeFrom}&timeTo={timeTo}&pageSize={pageSize}"
-                    + (string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}")
-                    + (string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}");
+        var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
+        var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
 
-        using var listResp = await client.GetAsync(listUrl, ct);
-        var listJson = await listResp.Content.ReadAsStringAsync(ct);
-        if (!listResp.IsSuccessStatusCode)
+        // =========================
+        // ดึง list แบบรองรับหน้า (next_page_token) สำหรับ TikTok
+        // =========================
+        var pageToken = "";
+        var allRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pageNo = 0;
+
+        do
         {
-            await audit.CompleteAsync(transId, h =>
+            pageNo++;
+            var pageQs = string.IsNullOrEmpty(pageToken) ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}";
+            var listUrl = $"/api/market/orders/list?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&timeRangeField={Uri.EscapeDataString(timeRangeField)}&timeFrom={timeFrom}&timeTo={timeTo}&pageSize={pageSize}{sellerIdQs}{envQs}{pageQs}";
+
+            using var listResp = await client.GetAsync(listUrl, ct);
+            var listJson = await listResp.Content.ReadAsStringAsync(ct);
+            if (!listResp.IsSuccessStatusCode)
             {
-                h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"fetch list failed: {listJson}";
-            }, ct);
-            return StatusCode((int)listResp.StatusCode, new { message = "Fetch list failed", listUrl, err = listJson, batchNo = trans.BatchNo });
-        }
+                await audit.CompleteAsync(transId, h =>
+                {
+                    h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"fetch list failed: {listJson}";
+                }, ct);
+                return StatusCode((int)listResp.StatusCode, new { message = "Fetch list failed", listUrl, err = listJson, batchNo = trans.BatchNo });
+            }
 
-        List<string> orderRefs;
-        using (var doc = JsonDocument.Parse(listJson))
-        {
-            // ถ้า list ตอบ error payload (เช่น response_optional_fields ผิด) ให้แจ้งกลับทันที
-            if (doc.RootElement.TryGetProperty("error", out var errEl) &&
-                errEl.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(errEl.GetString()))
+            using var doc = JsonDocument.Parse(listJson);
+
+            if (HasExplicitError(doc.RootElement))
             {
                 await audit.CompleteAsync(transId, h =>
                 {
                     h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"list error payload: {listJson}";
                 }, ct);
-                return BadRequest(new { message = "Shopee get_order_list returned error", listUrl, payload = listJson, batchNo = trans.BatchNo });
+                return BadRequest(new { message = "list returned error", listUrl, payload = listJson, batchNo = trans.BatchNo });
             }
 
-            var roots = string.IsNullOrWhiteSpace(listSelect) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, listSelect);
-            orderRefs = ExtractOrderRefsInDoc(platform, roots)
+            // default selector สำหรับ TikTok
+            var effListSelect = listSelect;
+            if (string.IsNullOrWhiteSpace(effListSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                effListSelect = "data.orders";
+
+            var roots = string.IsNullOrWhiteSpace(effListSelect) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, effListSelect);
+            var pageRefs = ExtractOrderRefsInDoc(platform, roots)
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Where(s => IsLikelyOrderRef(platform, s))
                 .Distinct()
                 .ToList();
 
-            if (orderRefs.Count == 0 && platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+            // Fallbacks: Shopee / TikTok
+            if (pageRefs.Count == 0)
             {
-                var fallbacks = new[]
+                if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
                 {
-                    "response.order_list", "response.orders",
-                    "result.order_list",   "result.orders",
-                    "data.order_list",     "data.orders",
-                    "orders"
-                };
-                foreach (var p in fallbacks)
-                {
-                    var r2 = SelectPathInDoc(doc.RootElement, p);
-                    if (r2.Count == 0) continue;
-                    orderRefs = ExtractOrderRefsInDoc(platform, r2)
-                        .Where(s => !string.IsNullOrWhiteSpace(s))
-                        .Where(s => IsLikelyOrderRef(platform, s))
-                        .Distinct()
-                        .ToList();
-                    if (orderRefs.Count > 0) break;
+                    foreach (var p in new[] { "response.order_list", "response.orders", "result.order_list", "result.orders", "data.order_list", "data.orders", "orders" })
+                    {
+                        var r2 = SelectPathInDoc(doc.RootElement, p);
+                        if (r2.Count == 0) continue;
+                        pageRefs = ExtractOrderRefsInDoc(platform, r2)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .Where(s => IsLikelyOrderRef(platform, s))
+                            .Distinct()
+                            .ToList();
+                        if (pageRefs.Count > 0) break;
+                    }
+                    if (pageRefs.Count == 0)
+                    {
+                        _log.LogWarning("Shopee list parse yielded 0 refs. Sample: {body}",
+                            listJson.Length > 500 ? listJson[..500] + "..." : listJson);
+                    }
                 }
-
-                if (orderRefs.Count == 0)
+                else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
                 {
-                    _log.LogWarning("Shopee list parse yielded 0 refs. Sample: {body}",
-                        listJson.Length > 500 ? listJson[..500] + "..." : listJson);
+                    foreach (var p in new[] { "data.orders", "orders", "data" })
+                    {
+                        var r2 = SelectPathInDoc(doc.RootElement, p);
+                        if (r2.Count == 0) continue;
+                        pageRefs = ExtractOrderRefsInDoc(platform, r2)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .Distinct()
+                            .ToList();
+                        if (pageRefs.Count > 0) break;
+                    }
                 }
             }
-        }
 
+            foreach (var r in pageRefs) allRefs.Add(r);
+
+            // next_page_token สำหรับ TikTok
+            pageToken = ExtractNextPageToken(doc.RootElement) ?? "";
+        }
+        while (!string.IsNullOrEmpty(pageToken));
+
+        var orderRefs = allRefs.ToList();
         var totalRefs = orderRefs.Count;
+
         int attempted = 0, created = 0, updated = 0, unchanged = 0, failed = 0;
         var unifiedIds = new List<long>();
-        var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
-        var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
 
+        // =========================
+        // ดึง detail + normalize
+        // =========================
         foreach (var orderRef in orderRefs)
         {
             attempted++;
@@ -323,9 +370,7 @@ public class NormalizeController : ControllerBase
                 List<string> natives;
                 using (var dDoc = JsonDocument.Parse(dJson))
                 {
-                    if (dDoc.RootElement.TryGetProperty("error", out var errEl) &&
-                        errEl.ValueKind == JsonValueKind.String &&
-                        !string.IsNullOrWhiteSpace(errEl.GetString()))
+                    if (HasExplicitError(dDoc.RootElement))
                     {
                         failed++;
                         await audit.AddItemAsync(transId, new UnifiedOrderTransItem
@@ -337,16 +382,36 @@ public class NormalizeController : ControllerBase
                         continue;
                     }
 
-                    var dRoots = string.IsNullOrWhiteSpace(detailSelect) ? new List<JsonElement> { dDoc.RootElement } : SelectPathInDoc(dDoc.RootElement, detailSelect);
+                    // default selector สำหรับ TikTok
+                    var effDetailSelect = detailSelect;
+                    if (string.IsNullOrWhiteSpace(effDetailSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                        effDetailSelect = "data.orders";
+
+                    var dRoots = string.IsNullOrWhiteSpace(effDetailSelect) ? new List<JsonElement> { dDoc.RootElement } : SelectPathInDoc(dDoc.RootElement, effDetailSelect);
                     natives = ExtractNativeOrdersInDoc(platform, dRoots);
-                    if (natives.Count == 0 && platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+
+                    // Fallbacks
+                    if (natives.Count == 0)
                     {
-                        foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                        if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
                         {
-                            var gs = SelectPathInDoc(dDoc.RootElement, g);
-                            if (gs.Count == 0) continue;
-                            natives = ExtractNativeOrdersInDoc(platform, gs);
-                            if (natives.Count > 0) break;
+                            foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                            {
+                                var gs = SelectPathInDoc(dDoc.RootElement, g);
+                                if (gs.Count == 0) continue;
+                                natives = ExtractNativeOrdersInDoc(platform, gs);
+                                if (natives.Count > 0) break;
+                            }
+                        }
+                        else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                        {
+                            foreach (var g in new[] { "data.orders.0", "data.orders", "orders", "data" })
+                            {
+                                var gs = SelectPathInDoc(dDoc.RootElement, g);
+                                if (gs.Count == 0) continue;
+                                natives = ExtractNativeOrdersInDoc(platform, gs);
+                                if (natives.Count > 0) break;
+                            }
                         }
                     }
                 }
@@ -436,8 +501,6 @@ public class NormalizeController : ControllerBase
         });
     }
 
-
-
     // ========================
     // Helpers
     // ========================
@@ -464,6 +527,36 @@ public class NormalizeController : ControllerBase
             return true;
         }
         return false;
+    }
+
+    private static bool HasExplicitError(JsonElement root)
+    {
+        // กรณี API ส่ง "error": "..." (แบบเดิม)
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("error", out var errEl) &&
+            errEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(errEl.GetString()))
+            return true;
+
+        // รูปแบบ TikTok: {"code": 0, "message": "Success", ...}
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("code", out var codeEl) &&
+            codeEl.ValueKind == JsonValueKind.Number && codeEl.TryGetInt32(out var code) && code != 0)
+            return true;
+
+        return false;
+    }
+
+    private static string? ExtractNextPageToken(JsonElement root)
+    {
+        // TikTok: $.data.next_page_token
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("data", out var data) &&
+            data.ValueKind == JsonValueKind.Object &&
+            data.TryGetProperty("next_page_token", out var tok) &&
+            tok.ValueKind == JsonValueKind.String)
+        {
+            var v = tok.GetString();
+            return string.IsNullOrWhiteSpace(v) ? null : v;
+        }
+        return null;
     }
 
     private static List<JsonElement> SelectPathInDoc(JsonElement root, string path)
@@ -502,7 +595,7 @@ public class NormalizeController : ControllerBase
         switch (platform.ToLowerInvariant())
         {
             case "shopee": return new[] { "order_sn", "orderSn" };
-            case "tiktok": return new[] { "order_id", "orderId", "order_number", "orderNumber" };
+            case "tiktok": return new[] { "id", "order_id", "orderId", "order_number", "orderNumber" };
             case "lazada": return new[] { "order_id", "orderId", "trade_order_id" };
             default: return Array.Empty<string>();
         }
@@ -561,6 +654,10 @@ public class NormalizeController : ControllerBase
                     refs.Add(node.GetString()!);
                     break;
 
+                case JsonValueKind.Number:
+                    refs.Add(node.ToString());
+                    break;
+
                 case JsonValueKind.Object:
                     foreach (var k in keys)
                     {
@@ -615,8 +712,10 @@ public class NormalizeController : ControllerBase
                     break;
 
                 case "tiktok":
-                    if (root.TryGetProperty("order_id", out var oid) && oid.ValueKind == JsonValueKind.String)
-                        return oid.GetString();
+                    if (root.TryGetProperty("id", out var tid0) && (tid0.ValueKind is JsonValueKind.String or JsonValueKind.Number))
+                        return tid0.ToString();
+                    if (root.TryGetProperty("order_id", out var oid) && (oid.ValueKind is JsonValueKind.String or JsonValueKind.Number))
+                        return oid.ToString();
                     if (root.TryGetProperty("orderId", out var oid2) && oid2.ValueKind == JsonValueKind.String)
                         return oid2.GetString();
                     if (root.TryGetProperty("order_number", out var on) && on.ValueKind == JsonValueKind.String)
@@ -639,4 +738,3 @@ public class NormalizeController : ControllerBase
         return null;
     }
 }
-

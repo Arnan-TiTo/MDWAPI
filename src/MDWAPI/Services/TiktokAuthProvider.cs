@@ -1,119 +1,398 @@
-﻿using MDWAPI.Common;
+﻿using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using MDWAPI.Common;
 using MDWAPI.Dtos;
 using MDWAPI.Repos;
+using Microsoft.AspNetCore.WebUtilities;
 
-namespace MDWAPI.Services;
-
-public class TiktokAuthProvider : IPlatformAuthProvider
+namespace MDWAPI.Services
 {
-    private readonly IHttpClientFactory _http;
-    private readonly IChannelTokenRepo _chanRepo;
-    private readonly IPartnerRepo _partnerRepo;
-    private readonly ILogger<TiktokAuthProvider> _log;
-
-    public TiktokAuthProvider(
-        IHttpClientFactory httpClientFactory,
-        IChannelTokenRepo chanRepo,
-        IPartnerRepo partnerRepo,
-        ILogger<TiktokAuthProvider> log)
+    public class TiktokAuthProvider : IPlatformAuthProvider
     {
-        _http = httpClientFactory;
-        _chanRepo = chanRepo;
-        _partnerRepo = partnerRepo;
-        _log = log;
-    }
+        private readonly IHttpClientFactory _http;
+        private readonly IChannelTokenRepo _chanRepo;
+        private readonly IPartnerRepo _partnerRepo;
+        private readonly ILogger<TiktokAuthProvider> _log;
 
-    // แลก code สำหรับ TikTok Shop (ตัวอย่าง mock — เติมของจริงได้ภายหลัง)
-    public async Task<object> ExchangeCodeAsync(
-        Platform platform,
-        int partnersId,
-        long? accountIdBig,
-        string? accountIdStr,
-        string code,
-        CancellationToken ct)
-    {
-        if (platform != Platform.TikTok) throw new ArgumentException("Invalid platform for TiktokAuthProvider");
-        if (string.IsNullOrWhiteSpace(accountIdStr)) throw new ArgumentException("TikTok needs accountIdStr (shop_id/seller_id)");
-
-        var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
-                  ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
-
-        // 👉 สมมติว่าแลกสำเร็จ (mock)
-        var accessToken = $"TTK_ACCESS_{Guid.NewGuid():N}";
-        var refreshToken = $"TTK_REFRESH_{Guid.NewGuid():N}";
-        var expireIn = 4 * 3600;
-
-        var dto = new ChannelTokenDtos
+        public TiktokAuthProvider(
+            IHttpClientFactory httpClientFactory,
+            IChannelTokenRepo chanRepo,
+            IPartnerRepo partnerRepo,
+            ILogger<TiktokAuthProvider> log)
         {
-            Channel = platform.ToChannelString(), // "tiktok"
-            Environment = cfg.Environment ?? "prod",
-            AuthType = "shop",
-            PartnerId = null,
-            AppKey = cfg.AppKey,
-            AccountIdBig = null,
-            AccountIdStr = accountIdStr,
-            AccessToken = accessToken,
-            RefreshToken = refreshToken,
-            AccessTokenExpAt = DateTime.UtcNow.AddSeconds(expireIn),
-            RefreshTokenExpAt = DateTime.UtcNow.AddDays(30),
-            Scope = null,
-            Country = "TH",
-            Region = "TH",
-            CompanysId = null,
-            PartnersId = cfg.Id,
-            TokenPayloadJson = null,
-            ExtraJson = null,
-            isActive = true
-        };
+            _http = httpClientFactory;
+            _chanRepo = chanRepo;
+            _partnerRepo = partnerRepo;
+            _log = log;
+        }
 
-        await _chanRepo.UpsertAsync(dto, ct);
+        // ---------------- Models ----------------
+        private record TikTokCommonResp<T>(int code, string? message, T? data);
+        private record TokenRespData(string access_token, string refresh_token, int? expires_in);
+        private record ShopsRespDataShop_V202309(string id, string cipher, string? name, string? region, string? code, string? seller_type);
+        private record ShopsRespData_V202309(IReadOnlyList<ShopsRespDataShop_V202309> shops);
 
-        return new { access_token = accessToken, refresh_token = refreshToken, expire_in = expireIn };
-    }
-
-    // รีเฟรช token สำหรับ TikTok Shop (ตัวอย่าง mock)
-    public async Task<object> RefreshAsync(
-        Platform platform,
-        int partnersId,
-        long? accountIdBig,
-        string? accountIdStr,
-        string refreshToken,
-        CancellationToken ct)
-    {
-        if (platform != Platform.TikTok) throw new ArgumentException("Invalid platform for TiktokAuthProvider");
-        if (string.IsNullOrWhiteSpace(accountIdStr)) throw new ArgumentException("TikTok needs accountIdStr");
-
-        var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
-                  ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
-
-        var newAccess = $"TTK_ACCESS_{Guid.NewGuid():N}";
-        var expireIn = 4 * 3600;
-
-        var dto = new ChannelTokenDtos
+        // ========================
+        // EXCHANGE (real token)
+        // ========================
+        public async Task<object> ExchangeCodeAsync(
+            Platform platform,
+            int partnersId,
+            long? accountIdBig,
+            string? accountIdStr,
+            string code,
+            CancellationToken ct)
         {
-            Channel = platform.ToChannelString(),
-            Environment = cfg.Environment ?? "prod",
-            AuthType = "shop",
-            PartnerId = null,
-            AppKey = cfg.AppKey,
-            AccountIdBig = null,
-            AccountIdStr = accountIdStr,
-            AccessToken = newAccess,
-            RefreshToken = refreshToken,             // refresh เดิม
-            AccessTokenExpAt = DateTime.UtcNow.AddSeconds(expireIn),
-            RefreshTokenExpAt = DateTime.UtcNow.AddDays(30),
-            Scope = null,
-            Country = "TH",
-            Region = "TH",
-            CompanysId = null,
-            PartnersId = cfg.Id,
-            TokenPayloadJson = null,
-            ExtraJson = null,
-            isActive = true
-        };
+            if (platform != Platform.TikTok)
+                throw new ArgumentException("Invalid platform for TiktokAuthProvider");
+            if (string.IsNullOrWhiteSpace(accountIdStr))
+                throw new ArgumentException("TikTok needs accountIdStr (shop_id)");
 
-        await _chanRepo.UpsertAsync(dto, ct);
+            var (appKey, appSecret, env, partnerRowId) = await LoadPartnerAsync(partnersId, ct);
 
-        return new { access_token = newAccess, refresh_token = refreshToken, expire_in = expireIn };
+            var http = _http.CreateClient("Shopee");
+            var tokenResp = await CallTokenGetAsync(http, appKey, appSecret, code, accountIdStr!, env, ct);
+            if (tokenResp is null || tokenResp.data is null || tokenResp.code != 0)
+                throw new HttpRequestException($"token/get error code={tokenResp?.code} message={tokenResp?.message}");
+
+            var accessToken = tokenResp.data.access_token;
+            var refreshToken = tokenResp.data.refresh_token;
+            var expireIn = tokenResp.data.expires_in ?? 4 * 3600;
+
+            // ลองดึง shop_cipher ทันที (ล้มได้ไม่เป็นไร)
+            string? shopCipher = null;
+            try
+            {
+                shopCipher = await FetchShopCipherAsync(http, appKey, appSecret, accessToken, env, accountIdStr!, ct);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Get shop_cipher after exchange failed; will try again on refresh.");
+            }
+
+            var extraJson = MergeExtraJson(
+                null,
+                new Dictionary<string, string?>
+                {
+                    ["app_secret"] = appSecret,
+                    ["shop_cipher"] = shopCipher
+                });
+
+            var dto = new ChannelTokenDtos
+            {
+                Channel = platform.ToChannelString(),   // "tiktok"
+                Environment = env,
+                AuthType = "shop",
+                PartnerId = null,
+                AppKey = appKey,
+                AccountIdBig = null,
+                AccountIdStr = accountIdStr,
+                AccessToken = accessToken,
+                RefreshToken = refreshToken,
+                AccessTokenExpAt = DateTime.UtcNow.AddSeconds(expireIn),
+                RefreshTokenExpAt = DateTime.UtcNow.AddDays(30),
+                Country = "TH",
+                Region = "TH",
+                PartnersId = partnerRowId,
+                ExtraJson = extraJson,
+                isActive = true
+            };
+
+            await _chanRepo.UpsertAsync(dto, ct);
+
+            return new { access_token = accessToken, refresh_token = refreshToken, expire_in = expireIn, shop_cipher = shopCipher };
+        }
+
+        // ========================
+        // REFRESH (auto, no param)
+        // ========================
+        public async Task<object> RefreshByAccountAsync(
+            Platform platform,
+            int partnersId,
+            long? accountIdBig,
+            string? accountIdStr,
+            CancellationToken ct)
+        {
+            if (platform != Platform.TikTok)
+                throw new ArgumentException("Invalid platform for TiktokAuthProvider");
+            if (string.IsNullOrWhiteSpace(accountIdStr))
+                throw new ArgumentException("TikTok needs accountIdStr");
+
+            var (appKey, appSecret, env, partnerRowId) = await LoadPartnerAsync(partnersId, ct);
+
+            // หา refresh ล่าสุดของบัญชีนี้
+            var row = await _chanRepo.GetValidAsync("tiktok", env, null, appKey, null, accountIdStr, ct);
+            if (row is null || string.IsNullOrWhiteSpace(row.RefreshToken))
+                throw new InvalidOperationException("No refresh_token found for this TikTok account. Please reconnect the shop.");
+
+            var http = _http.CreateClient("Shopee");
+            var refreshResp = await CallTokenRefreshAsync(http, appKey, appSecret, row.RefreshToken!, accountIdStr!, env, ct);
+            if (refreshResp is null || refreshResp.data is null || refreshResp.code != 0)
+                throw new HttpRequestException($"token/refresh error code={refreshResp?.code} message={refreshResp?.message}");
+
+            var newAccess = refreshResp.data.access_token;
+            var expireIn = refreshResp.data.expires_in ?? 4 * 3600;
+
+            // เติม shop_cipher ถ้ายังไม่มี
+            var extraJson = row.ExtraJson;
+            var hasCipher = !string.IsNullOrWhiteSpace(TryRead(extraJson, "shop_cipher"));
+            if (!hasCipher)
+            {
+                try
+                {
+                    var fetchedCipher = await FetchShopCipherAsync(http, appKey, appSecret, newAccess, env, accountIdStr!, ct);
+                    if (!string.IsNullOrWhiteSpace(fetchedCipher))
+                    {
+                        extraJson = MergeExtraJson(extraJson, new Dictionary<string, string?> { ["shop_cipher"] = fetchedCipher });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Fetch shop_cipher during refresh failed; continue.");
+                }
+            }
+
+            // Ensure app_secret present
+            extraJson = MergeExtraJson(extraJson, new Dictionary<string, string?> { ["app_secret"] = appSecret });
+
+            var dto = new ChannelTokenDtos
+            {
+                Channel = platform.ToChannelString(),
+                Environment = env,
+                AuthType = "shop",
+                PartnerId = null,
+                AppKey = appKey,
+                AccountIdBig = null,
+                AccountIdStr = accountIdStr,
+                AccessToken = newAccess,
+                RefreshToken = row.RefreshToken!, // refresh เดิม
+                AccessTokenExpAt = DateTime.UtcNow.AddSeconds(expireIn),
+                RefreshTokenExpAt = row.RefreshTokenExpAt ?? DateTime.UtcNow.AddDays(30),
+                Country = "TH",
+                Region = "TH",
+                PartnersId = partnerRowId,
+                ExtraJson = extraJson,
+                isActive = true
+            };
+
+            await _chanRepo.UpsertAsync(dto, ct);
+
+            return new
+            {
+                access_token = newAccess,
+                refresh_token = row.RefreshToken,
+                expire_in = expireIn,
+                shop_cipher = TryRead(dto.ExtraJson, "shop_cipher")
+            };
+        }
+
+        // ให้คอมไพล์ผ่านตามสัญญา interface
+        public Task<object> RefreshAsync(Platform platform, int partnersId, long? accountIdBig, string? accountIdStr, string refreshToken, CancellationToken ct)
+            => throw new NotSupportedException("Use RefreshByAccountAsync for TikTok.");
+
+        // ---------------- Internal helpers ----------------
+
+        private async Task<(string appKey, string appSecret, string environment, int partnersId)> LoadPartnerAsync(int partnersId, CancellationToken ct)
+        {
+            var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
+                      ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
+
+            if (string.IsNullOrWhiteSpace(cfg.AppKey))
+                throw new InvalidOperationException("TikTok AppKey (client_key) not found in Partners.");
+            if (string.IsNullOrWhiteSpace(cfg.PartnerKey))
+                throw new InvalidOperationException("TikTok AppSecret (PartnerKey) not found in Partners.");
+
+            return (cfg.AppKey!, cfg.PartnerKey!, cfg.Environment ?? "prod", cfg.Id);
+        }
+
+        private static string HostFor(string environment)
+            => string.Equals(environment, "sandbox", StringComparison.OrdinalIgnoreCase)
+                ? "https://sandbox-open-api.tiktokglobalshop.com"
+                : "https://open-api.tiktokglobalshop.com";
+
+        private static string AuthHostFor(string environment)
+            => "https://auth.tiktok-shops.com";
+
+        private static string HmacHex(string key, string raw)
+        {
+            using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(key));
+            return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        }
+
+        private static string BuildSign(string appSecret, string path, IDictionary<string, string?> queryNoSign)
+        {
+            // NOTE: ต้องเรียงคีย์แบบ ASCII และต่อ string = path + k1 + v1 + k2 + v2 ...
+            var sb = new StringBuilder(path);
+            foreach (var kv in queryNoSign
+                     .Where(x => !string.Equals(x.Key, "sign", StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(x => x.Key, StringComparer.Ordinal))
+            {
+                sb.Append(kv.Key);
+                sb.Append(kv.Value ?? "");
+            }
+            return HmacHex(appSecret, sb.ToString());
+        }
+
+        private static string? TryRead(string? json, string key)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                    return v.GetString();
+            }
+            catch { }
+            return null;
+        }
+
+        private static string MergeExtraJson(string? existingJson, IDictionary<string, string?> patch)
+        {
+            var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(existingJson))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(existingJson);
+                    foreach (var p in doc.RootElement.EnumerateObject())
+                        dict[p.Name] = p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString() : p.Value.ToString();
+                }
+                catch { /* ignore */ }
+            }
+
+            foreach (var kv in patch)
+                if (!string.IsNullOrWhiteSpace(kv.Value))
+                    dict[kv.Key] = kv.Value;
+
+            return JsonSerializer.Serialize(dict);
+        }
+
+        // --------- TikTok auth calls ----------
+        private async Task<TikTokCommonResp<TokenRespData>> CallTokenGetAsync(
+            HttpClient http, string appKey, string appSecret, string code, string shopId, string env, CancellationToken ct)
+        {
+            var baseUri = AuthHostFor(env);
+            var path = "/api/v2/token/get";
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>
+            {
+                ["app_key"] = appKey,
+                ["grant_type"] = "authorized_code",
+                ["auth_code"] = code,
+                ["shop_id"] = shopId,
+                ["timestamp"] = ts
+            };
+            q["sign"] = BuildSign(appSecret, path, q);
+
+            var url = QueryHelpers.AddQueryString($"{baseUri}{path}", q);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"token/get invalid http {(int)resp.StatusCode}: {body}");
+
+            return JsonSerializer.Deserialize<TikTokCommonResp<TokenRespData>>(body)
+                   ?? throw new HttpRequestException("token/get invalid json");
+        }
+
+        private async Task<TikTokCommonResp<TokenRespData>> CallTokenRefreshAsync(
+            HttpClient http, string appKey, string appSecret, string refreshToken, string shopId, string env, CancellationToken ct)
+        {
+            var baseUri = AuthHostFor(env);
+            var path = "/api/v2/token/refresh";
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>
+            {
+                ["app_key"] = appKey,
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = refreshToken,
+                ["shop_id"] = shopId,
+                ["timestamp"] = ts
+            };
+            q["sign"] = BuildSign(appSecret, path, q);
+
+            var url = QueryHelpers.AddQueryString($"{baseUri}{path}", q);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"token/refresh invalid http {(int)resp.StatusCode}: {body}");
+
+            return JsonSerializer.Deserialize<TikTokCommonResp<TokenRespData>>(body)
+                   ?? throw new HttpRequestException("token/refresh invalid json");
+        }
+
+        // --------- Get shop list (for shop_cipher) ----------
+        private static string BuildTikTokSign_DocSpec(
+            string appSecret,
+            string path,
+            IEnumerable<KeyValuePair<string, string?>> queryParams,
+            string? bodyUtf8 = null
+        )
+        {
+            var filtered = queryParams
+                .Where(kv => !string.Equals(kv.Key, "sign", StringComparison.OrdinalIgnoreCase)
+                          && !string.Equals(kv.Key, "access_token", StringComparison.OrdinalIgnoreCase));
+            var sorted = filtered.OrderBy(kv => kv.Key, StringComparer.Ordinal);
+
+            var sb = new StringBuilder(path);
+            foreach (var kv in sorted)
+                sb.Append(kv.Key).Append(kv.Value ?? string.Empty);
+            if (!string.IsNullOrEmpty(bodyUtf8))
+                sb.Append(bodyUtf8);
+
+            var signatureParams = appSecret + sb + appSecret;
+            using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(appSecret));
+            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(signatureParams));
+            return Convert.ToHexString(hash).ToLowerInvariant();
+        }
+
+        private async Task<string?> FetchShopCipherAsync(
+            HttpClient http,
+            string appKey,
+            string appSecret,
+            string accessToken,
+            string env,
+            string accountIdStr,
+            CancellationToken ct)
+        {
+            var host = HostFor(env);                      // "https://open-api.tiktokglobalshop.com"
+            var path = "/authorization/202309/shops";
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["app_key"] = appKey,
+                ["timestamp"] = ts,
+                ["sign_method"] = "sha256"
+            };
+            var sign = BuildTikTokSign_DocSpec(appSecret, path, q, bodyUtf8: null);
+            q["sign"] = sign;
+
+            var url = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString($"{host}{path}", q);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("x-tts-access-token", accessToken);
+            req.Headers.Accept.ParseAdd("application/json");
+
+            var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            _log.LogInformation("FetchShopCipher GET {Url} => {Status}. sign={Sign}. Body={Body}", url, (int)resp.StatusCode, sign, body);
+            if (!resp.IsSuccessStatusCode) return null;
+
+            // parse ตามสคีมาใหม่
+            var parsed = JsonSerializer.Deserialize<TikTokCommonResp<ShopsRespData_V202309>>(body);
+            var shops = parsed?.data?.shops;
+            if (shops is null || shops.Count == 0) return null;
+
+            // เทียบ id กับ accountIdStr
+            var hit = shops.FirstOrDefault(s => string.Equals(s.id, accountIdStr, StringComparison.Ordinal));
+            return hit?.cipher; // << นี่คือค่าที่ต้องเก็บเป็น shop_cipher
+        }
     }
 }
