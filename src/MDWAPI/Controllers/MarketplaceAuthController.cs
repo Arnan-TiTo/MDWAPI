@@ -1,5 +1,6 @@
 ﻿using MDWAPI.Common;
 using MDWAPI.Services;
+using MDWAPI.Repos; // ใช้ IChannelTokenRepo
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,7 +15,8 @@ namespace MDWAPI.Controllers
         private readonly ShopeeAuthLinkService _shopeeLink;
         private readonly LazadaAuthLinkService _lazadaLink;
         private readonly TiktokAuthLinkService _tiktokLink;
-        private readonly ShopeeTokenRefreshService _shopeeRefresh; // ✅ เรียกใช้ตรงสำหรับ Shopee
+        private readonly ShopeeTokenRefreshService _shopeeRefresh;
+        private readonly IChannelTokenRepo _chanTokens;          // <<— เหลือ repo นี้อย่างเดียว
         private readonly ILogger<MarketplaceAuthController> _log;
 
         public MarketplaceAuthController(
@@ -23,6 +25,7 @@ namespace MDWAPI.Controllers
             LazadaAuthLinkService lazadaLink,
             TiktokAuthLinkService tiktokLink,
             ShopeeTokenRefreshService shopeeRefresh,
+            IChannelTokenRepo chanTokens,
             ILogger<MarketplaceAuthController> log)
         {
             _svc = svc;
@@ -30,15 +33,13 @@ namespace MDWAPI.Controllers
             _lazadaLink = lazadaLink;
             _tiktokLink = tiktokLink;
             _shopeeRefresh = shopeeRefresh;
+            _chanTokens = chanTokens;
             _log = log;
         }
 
         // =========================
         // Create Link (ทุกแพลตฟอร์ม)
         // =========================
-        // GET /api/market/auth/link?platform=Shopee&shopId=225987929&callbackUrl=...
-        // GET /api/market/auth/link?platform=Lazada&partnersId=1013&accountIdStr=SELLER_ABC&callbackUrl=...
-        // GET /api/market/auth/link?platform=TikTok&partnersId=1013&accountIdStr=<shop_id>&callbackUrl=...
         [HttpGet("link")]
         public async Task<IActionResult> GetAuthLink(
             [FromQuery] Platform platform,
@@ -96,9 +97,6 @@ namespace MDWAPI.Controllers
         // =========================
         // Exchange (ทุกแพลตฟอร์ม) — ใช้ shopId + code
         // =========================
-        // POST /api/market/auth/exchange?platform=Shopee&shopId=225987929&code=...
-        // POST /api/market/auth/exchange?platform=Lazada&shopId=<binding_shopId>&code=...
-        // POST /api/market/auth/exchange?platform=TikTok&shopId=<shop_id>&code=ROW_...
         [HttpPost("exchange")]
         public async Task<IActionResult> Exchange(
             [FromQuery] Platform platform,
@@ -134,11 +132,12 @@ namespace MDWAPI.Controllers
         // =========================
         // POST /api/market/auth/refresh?platform=Shopee&shopId=225987929
         // POST /api/market/auth/refresh?platform=Lazada&shopId=<binding_shopId>
-        // POST /api/market/auth/refresh?platform=TikTok&shopId=<shop_id>
+        // POST /api/market/auth/refresh?platform=TikTok&shopId=<shop_id>[&partnersId=1013]
         [HttpPost("refresh")]
         public async Task<IActionResult> Refresh(
             [FromQuery] Platform platform,
             [FromQuery] long shopId,
+            [FromQuery] int? partnersId, // optional; ถ้าไม่ส่งมาจะ auto-detect จาก ChannelTokens
             CancellationToken ct)
         {
             if (shopId <= 0)
@@ -150,14 +149,38 @@ namespace MDWAPI.Controllers
 
                 if (platform == Platform.Shopee)
                 {
-                    // ✅ Shopee ใช้ service เดิม (อ่าน refresh token เองจาก DB)
                     result = await _shopeeRefresh.RefreshByShopIdAsync(shopId, ct);
+                    return Ok(new { success = true, result });
                 }
-                else
+
+                if (platform == Platform.Lazada)
                 {
-                    // ✅ TikTok/Lazada -> ให้ MarketplaceAuthService ไปตัดสินใจ (TikTok = RefreshByAccountAsync)
-                    result = await _svc.RefreshByShopAsync(platform, shopId, ct);
+                    return BadRequest(new { success = false, error = "not_supported_for_lazada" });
                 }
+
+                // ===== TikTok =====
+                int? pid = partnersId;
+
+                if (!pid.HasValue)
+                {
+                    pid = await AutoDetectPartnersIdForTikTokAsync(shopId, ct);
+                    if (!pid.HasValue)
+                    {
+                        return BadRequest(new
+                        {
+                            success = false,
+                            error = "partnersId_required",
+                            message = "Cannot auto-detect partnersId for this TikTok shop. Please supply ?partnersId=xxxx."
+                        });
+                    }
+                }
+
+                result = await _svc.RefreshByAccountAsync(
+                    platform: Platform.TikTok,
+                    partnersId: pid.Value,
+                    accountIdBig: null,
+                    accountIdStr: shopId.ToString(),
+                    ct: ct);
 
                 return Ok(new { success = true, result });
             }
@@ -167,7 +190,6 @@ namespace MDWAPI.Controllers
             }
             catch (NotSupportedException ex)
             {
-                // เผื่อ Lazada ยังไม่ทำ auto-refresh
                 return BadRequest(new { success = false, error = ex.Message });
             }
             catch (HttpRequestException ex)
@@ -185,48 +207,41 @@ namespace MDWAPI.Controllers
             }
         }
 
-        // =========================
-        // (ออปชัน) Shopee callback เดิม — คงไว้เพื่อความเข้ากันได้
-        // =========================
-        [AllowAnonymous]
-        [HttpGet("shopee/callback")]
-        public async Task<IActionResult> ShopeeCallback(
-            [FromQuery] string code,
-            [FromQuery(Name = "shop_id")] long shopIdFromShopee,
-            [FromQuery] string? state,
-            [FromQuery] string? main_account_id,
-            [FromQuery] string? next,
-            CancellationToken ct = default)
+        /// <summary>
+        /// เดา partnersId สำหรับ TikTok จาก ChannelTokens เท่านั้น:
+        /// - ลอง environment=prod ก่อน, ถ้าไม่เจอค่อยลอง sandbox
+        /// </summary>
+        private async Task<int?> AutoDetectPartnersIdForTikTokAsync(long shopId, CancellationToken ct)
         {
-            try
-            {
-                var result = await _svc.ExchangeCodeByShopAsync(Platform.Shopee, shopIdFromShopee, code, ct);
+            var accountIdStr = shopId.ToString();
 
-                if (!string.IsNullOrWhiteSpace(next))
-                {
-                    var uri = new UriBuilder(next);
-                    var q = System.Web.HttpUtility.ParseQueryString(uri.Query);
-                    q["success"] = "true";
-                    uri.Query = q.ToString();
-                    return Redirect(uri.ToString());
-                }
+            // prod ก่อน
+            var row = await _chanTokens.GetValidAsync(
+                channel: "tiktok",
+                environment: "prod",
+                partnerId: null,
+                appKey: null,
+                accountIdBig: null,
+                accountIdStr: accountIdStr,
+                ct: ct);
 
-                return Ok(new { success = true, shopId = shopIdFromShopee, exchanged = result });
-            }
-            catch (Exception ex)
+            if (row == null)
             {
-                _log.LogError(ex, "Shopee OAuth callback failed: {Msg}", ex.Message);
-                if (!string.IsNullOrWhiteSpace(next))
-                {
-                    var uri = new UriBuilder(next);
-                    var q = System.Web.HttpUtility.ParseQueryString(uri.Query);
-                    q["success"] = "false";
-                    q["error"] = "callback_exchange_failed";
-                    uri.Query = q.ToString();
-                    return Redirect(uri.ToString());
-                }
-                return BadRequest(new { success = false, error = ex.Message });
+                // sandbox เผื่อ
+                row = await _chanTokens.GetValidAsync(
+                    channel: "tiktok",
+                    environment: "sandbox",
+                    partnerId: null,
+                    appKey: null,
+                    accountIdBig: null,
+                    accountIdStr: accountIdStr,
+                    ct: ct);
             }
+
+            if (row?.PartnersId != null && row.PartnersId > 0)
+                return row.PartnersId;
+
+            return null;
         }
     }
 }

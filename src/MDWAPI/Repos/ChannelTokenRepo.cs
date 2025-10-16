@@ -2,9 +2,12 @@
 using Dapper;
 using MDWAPI.Data;
 using MDWAPI.Dtos;
+using MDWAPI.Models;
 using MDWAPI.Repos;
 using Microsoft.EntityFrameworkCore;
+using System;
 using System.Data;
+using System.Threading.Channels;
 
 public class ChannelTokenRepo : IChannelTokenRepo
 {
@@ -57,6 +60,28 @@ ORDER BY AccessTokenExpAt DESC, Id DESC;";
                     cancellationToken: ct));
         }
         finally { if (needClose) await conn.CloseAsync(); }
+    }
+
+    public async Task<ChannelTokenDtos?> GetLatestForTikTokShopAsync(string shopId, CancellationToken ct)
+    {
+        const string sql = @"
+SELECT TOP (1) *
+FROM imw.mdw.ChannelTokens WITH (NOLOCK)
+WHERE Channel = 'tiktok'
+  AND (AccountIdStr = @shopId OR AccountIdBig = TRY_CAST(@shopId AS BIGINT)
+       OR AccountIdStrNorm = @shopId OR AccountIdBigStr = @shopId)
+  AND (isActive = 1 OR isActive IS NULL)
+ORDER BY UpdatedAt DESC, CreatedAt DESC;";
+
+        var conn = _db.Database.GetDbConnection();
+        var needClose = conn.State != ConnectionState.Open;
+        if (needClose) await conn.OpenAsync(ct);
+        try
+        {
+            return await conn.QueryFirstOrDefaultAsync<ChannelTokenDtos>(sql, new { shopId });
+        }
+        finally { if (needClose) await conn.CloseAsync(); }
+
     }
 
     public async Task<ChannelTokenDtos?> GetLatestForRefreshAsync(

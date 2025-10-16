@@ -1,5 +1,4 @@
-﻿// MDWAPI/Repos/IChannelTokenRepo.cs
-using MDWAPI.Dtos;
+﻿using MDWAPI.Dtos;
 
 namespace MDWAPI.Repos
 {
@@ -30,5 +29,7 @@ namespace MDWAPI.Repos
             CancellationToken ct);
 
         Task UpsertAsync(ChannelTokenDtos row, CancellationToken ct);
+
+        Task<ChannelTokenDtos?> GetLatestForTikTokShopAsync(string shopId, CancellationToken ct);
     }
 }

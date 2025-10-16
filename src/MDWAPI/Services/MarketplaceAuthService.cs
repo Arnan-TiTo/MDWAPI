@@ -78,5 +78,22 @@ namespace MDWAPI.Services
                 _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, "Unsupported platform")
             };
         }
+
+        public Task<object> RefreshByAccountAsync(
+            Platform platform,
+            int partnersId,
+            long? accountIdBig,
+            string? accountIdStr,
+            CancellationToken ct)
+        {
+            switch (platform)
+            {
+                case Platform.TikTok:
+                    return _tiktok.RefreshByAccountAsync(platform, partnersId, accountIdBig, accountIdStr, ct);
+
+                default:
+                    throw new NotSupportedException("RefreshByAccountAsync currently supports only TikTok.");
+            }
+        }
     }
 }
