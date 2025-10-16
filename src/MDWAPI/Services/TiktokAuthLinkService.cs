@@ -1,6 +1,7 @@
-﻿using System.Web;
+﻿using MDWAPI.Models;
 using MDWAPI.Repos;
 using Microsoft.Extensions.Logging;
+using System.Web;
 
 namespace MDWAPI.Services
 {
@@ -11,26 +12,32 @@ namespace MDWAPI.Services
     public class TiktokAuthLinkService
     {
         private readonly IPartnerRepo _partnerRepo;
+        private readonly IShopRepo _shopRepo;
         private readonly ILogger<TiktokAuthLinkService> _log;
 
-        public TiktokAuthLinkService(IPartnerRepo partnerRepo, ILogger<TiktokAuthLinkService> log)
+        public TiktokAuthLinkService(IPartnerRepo partnerRepo, IShopRepo shopRepo, ILogger<TiktokAuthLinkService> log)
         {
             _partnerRepo = partnerRepo;
+            _shopRepo = shopRepo;
             _log = log;
         }
 
         /// <summary>
         /// partnersId: ชี้ไปที่ mdw.Partners เพื่อดึง AppKey/Environment
-        /// accountIdStr: แนะนำให้ส่ง shop_id (string) ถ้ามี เพื่อให้ TikTok รู้ว่าจะเชื่อมร้านไหน
-        /// callbackUrl: ระบบคุณที่ TikTok จะ redirect กลับมาพร้อม code
+        /// accountIdStr:ส่ง shop_id (string) เพื่อให้ TikTok รู้ว่าจะเชื่อมร้านไหน
+        /// callbackUrl: TikTok จะ redirect กลับมาพร้อม code
         /// </summary>
-        public async Task<string> BuildAuthUrlAsync(int partnersId, string accountIdStr, string callbackUrl, CancellationToken ct = default)
+        public async Task<string> BuildAuthUrlAsync(long shopId, string callbackUrl, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(accountIdStr))
-                throw new ArgumentException("accountIdStr (shop_id) is required for TikTok", nameof(accountIdStr));
+            if (string.IsNullOrWhiteSpace(shopId.ToString()))
+                throw new ArgumentException("accountIdStr (shop_id) is required for TikTok", nameof(shopId));
 
+            var (partnersId, accountIdStr, _) = await _shopRepo.GetShopBindingAsync(shopId, ct);
             var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
                       ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
+
+            if (cfg.PartnerId is null || string.IsNullOrWhiteSpace(cfg.PartnerKey))
+                throw new InvalidOperationException("Shopee PartnerId/PartnerKey is required");
 
             var appKey = cfg.AppKey;
             if (string.IsNullOrWhiteSpace(appKey))
@@ -50,7 +57,7 @@ namespace MDWAPI.Services
             q["state"] = state;
 
             // บางสภาพแวดล้อมต้องการส่ง shop_id ไปด้วย
-            q["shop_id"] = accountIdStr;
+            q["shop_id"] = accountIdStr.ToString();
 
             var url = $"{authHost}?{q}";
             _log.LogInformation("TikTok auth URL built: {url}", url);

@@ -1,6 +1,7 @@
 ﻿using MDWAPI.Common;
-using MDWAPI.Services;
+using MDWAPI.Dtos;
 using MDWAPI.Repos; // ใช้ IChannelTokenRepo
+using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -70,11 +71,11 @@ namespace MDWAPI.Controllers
                         break;
 
                     case Platform.TikTok:
-                        if (!partnersId.HasValue)
-                            return BadRequest(new { success = false, error = "partnersId_required_for_tiktok" });
+                        //if (!partnersId.HasValue)
+                            //return BadRequest(new { success = false, error = "partnersId_required_for_tiktok" });
                         if (string.IsNullOrWhiteSpace(accountIdStr))
                             return BadRequest(new { success = false, error = "accountIdStr_required_for_tiktok", hint = "use TikTok shop_id as accountIdStr" });
-                        url = await _tiktokLink.BuildAuthUrlAsync(partnersId.Value, accountIdStr!, callbackUrl, ct);
+                        url = await _tiktokLink.BuildAuthUrlAsync(Convert.ToInt64(accountIdStr!), callbackUrl, ct);
                         break;
 
                     default:
@@ -215,33 +216,32 @@ namespace MDWAPI.Controllers
         {
             var accountIdStr = shopId.ToString();
 
-            // prod ก่อน
-            var row = await _chanTokens.GetValidAsync(
-                channel: "tiktok",
-                environment: "prod",
-                partnerId: null,
-                appKey: null,
-                accountIdBig: null,
-                accountIdStr: accountIdStr,
-                ct: ct);
+            ChannelTokenDtos? row = null;
 
+            //ลองไล่ลำดับ env 
             if (row == null)
             {
-                // sandbox เผื่อ
-                row = await _chanTokens.GetValidAsync(
-                    channel: "tiktok",
-                    environment: "sandbox",
-                    partnerId: null,
-                    appKey: null,
-                    accountIdBig: null,
-                    accountIdStr: accountIdStr,
-                    ct: ct);
+                foreach (var e in new[] { "prod", "sandbox" })
+                {
+                    row = await _chanTokens.GetLatestForRefreshByStrAsync(
+                        channel: "tiktok",
+                        environment: e,
+                        appKey: null,
+                        accountIdStr: accountIdStr,
+                        ct: ct
+                    );
+                    if (row?.PartnersId is > 0) break;
+                }
             }
 
-            if (row?.PartnersId != null && row.PartnersId > 0)
-                return row.PartnersId;
+            // final fallback: (ถ้ามี) เมธอดที่ผ่อนเงื่อนไขด้าน account id
+            if (row == null)
+            {
+                row = await _chanTokens.GetLatestForTikTokShopAsync(accountIdStr, ct);
+            }
 
-            return null;
+            return (row?.PartnersId is > 0) ? row!.PartnersId : null;
         }
+
     }
 }

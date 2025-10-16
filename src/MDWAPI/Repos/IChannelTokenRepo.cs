@@ -31,5 +31,14 @@ namespace MDWAPI.Repos
         Task UpsertAsync(ChannelTokenDtos row, CancellationToken ct);
 
         Task<ChannelTokenDtos?> GetLatestForTikTokShopAsync(string shopId, CancellationToken ct);
+
+        Task<string> GetCheckExpireAsync(string channel, string environment, long? partnerId, string? appKey,
+            long? accountIdBig, string? accountIdStr, int graceMinutes, CancellationToken ct);
+
+        Task<string> GetCheckExpireByAccountStrAsync(string channel, string environment, string accountIdStr,
+            int graceMinutes, CancellationToken ct);
+
     }
+
+
 }

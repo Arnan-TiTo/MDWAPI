@@ -1,12 +1,14 @@
-﻿using MDWAPI.Entities;
+﻿using MDWAPI.Data;
+using MDWAPI.Entities;
 using MDWAPI.Models;
+using MDWAPI.Repos;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Linq;
 
 namespace MDWAPI.Controllers;
 
@@ -19,13 +21,19 @@ public class NormalizeController : ControllerBase
     private readonly IHttpClientFactory _httpFactory;
     private readonly IMemoryCache _cache;
     private readonly ILogger<NormalizeController> _log;
-
-    public NormalizeController(OrderNormalizeService svc, IHttpClientFactory httpFactory, IMemoryCache cache, ILogger<NormalizeController> log)
+    private readonly IChannelTokenRepo _chanRepo;
+    public NormalizeController(
+        OrderNormalizeService svc, 
+        IHttpClientFactory httpFactory, 
+        IMemoryCache cache, 
+        ILogger<NormalizeController> log,
+         IChannelTokenRepo chanRepo)
     {
         _svc = svc;
         _httpFactory = httpFactory;
         _cache = cache;
         _log = log;
+        _chanRepo = chanRepo;
     }
 
     // -----------------
@@ -40,6 +48,7 @@ public class NormalizeController : ControllerBase
         [FromQuery] string? batchNo,
         [FromQuery] string? select,
         [FromQuery] string? env,
+        [FromQuery] int? partnersId,
         [FromServices] IIngestionAuditService audit
     )
     {
@@ -60,7 +69,7 @@ public class NormalizeController : ControllerBase
         };
         var transId = await audit.BeginAsync(trans, ct);
 
-        await RefreshTokenIfNeededAsync(platform, shopId, sellerId, env, ct);
+        await RefreshTokenIfNeededAsync(platform, shopId, partnersId, env, ct);
 
         var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
         var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
@@ -219,8 +228,8 @@ public class NormalizeController : ControllerBase
         [FromQuery] string? batchNo = null,
         [FromQuery] string? env = null,
         [FromQuery] string? listSelect = null,
-        [FromQuery] string? detailSelect = null
-    )
+        [FromQuery] string? detailSelect = null,
+        [FromQuery] int? partnersId = null)
     {
         var ct = HttpContext.RequestAborted;
         var client = _httpFactory.CreateClient("OrdersApi");
@@ -241,7 +250,7 @@ public class NormalizeController : ControllerBase
         };
         var transId = await audit.BeginAsync(trans, ct);
 
-        await RefreshTokenIfNeededAsync(platform, shopId ?? 0, sellerId, env, ct);
+        var chkExp = await RefreshTokenIfNeededAsync(platform, shopId ?? 0, partnersId, env, ct);
 
         var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
         var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
@@ -505,30 +514,61 @@ public class NormalizeController : ControllerBase
     // Helpers
     // ========================
     private async Task<bool> RefreshTokenIfNeededAsync(
-        string platform, long shopId, string? sellerId, string? env, CancellationToken ct,
+        string platform,
+        long shopId,
+        int? partnersId,          // ✅ ใช้ค่าจริงที่รับมา (ไม่ fix)
+        string? env,              // ✅ ใช้ค่าจริงที่รับมา (ไม่ fix)
+        CancellationToken ct,
         TimeSpan? cooldown = null)
     {
         var cd = cooldown ?? TimeSpan.FromMinutes(10);
-        var cacheKey = $"auth-refresh:{platform}:{shopId}:{sellerId}:{env}";
-        if (_cache.TryGetValue(cacheKey, out _)) return false;
 
+        // cache เฉพาะเมื่อเพิ่ง refresh สำเร็จ เพื่อกัน spam
+        var cacheKey = $"auth-refresh:{platform}:{shopId}:{partnersId}:{env}";
+        if (_cache.TryGetValue(cacheKey, out _))
+            return false;
+
+        // 1) เช็คอายุ token จากฐาน: < UTC+10 นาที => "refresh", otherwise "use token"
+        var decision = await _chanRepo.GetCheckExpireAsync(
+            channel: platform,
+            environment: env,                // ถ้าอยากไม่ filter env ให้ส่ง null เข้ามา
+            partnerId: partnersId,
+            appKey: null,
+            accountIdBig: null,
+            accountIdStr: shopId.ToString(),
+            graceMinutes: 10,
+            ct: ct
+        );
+
+        if (!"refresh".Equals(decision, StringComparison.OrdinalIgnoreCase))
+        {
+            // "use token" -> ไม่ต้องทำอะไร ปล่อย flow ไปต่อ
+            return false;
+        }
+
+        // 2) ต้อง refresh → เรียก POST /api/market/auth/refresh?platform=...&shopId=...[&partnersId=...][&env=...]
         var client = _httpFactory.CreateClient("OrdersApi");
         if (Request.Headers.TryGetValue("Authorization", out var auth))
             client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
 
-        var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
-        var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
-        var url = $"/api/market/auth/refresh?platform={Uri.EscapeDataString(platform)}&shopId={shopId}{sellerIdQs}{envQs}";
+        var url = $"/api/market/auth/refresh?platform={Uri.EscapeDataString(platform)}&shopId={shopId}";
+        if (partnersId.HasValue) url += $"&partnersId={partnersId.Value}";
+        if (!string.IsNullOrWhiteSpace(env)) url += $"&env={Uri.EscapeDataString(env)}";  // เผื่อ backend รองรับ
 
-        using var resp = await client.GetAsync(url, ct);
+        using var resp = await client.PostAsync(url, new StringContent(""), ct); // ✅ POST
         if (resp.IsSuccessStatusCode)
         {
-            _cache.Set(cacheKey, true, cd);
+            _cache.Set(cacheKey, true, cd);  // กันเรียกถี่หลังเพิ่ง refresh สำเร็จ
             return true;
         }
+
+        // log ไว้ช่วย debug ถ้า refresh ล้มเหลว
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        _log.LogWarning("Auth refresh failed for {Platform}/{Shop} (partnersId={PartnersId}, env={Env}) => {Status} {Body}",
+            platform, shopId, partnersId, env, (int)resp.StatusCode, body);
+
         return false;
     }
-
     private static bool HasExplicitError(JsonElement root)
     {
         // กรณี API ส่ง "error": "..." (แบบเดิม)

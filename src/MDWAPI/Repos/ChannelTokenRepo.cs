@@ -1,5 +1,4 @@
-﻿// MDWAPI/Repos/ChannelTokenRepo.cs
-using Dapper;
+﻿using Dapper;
 using MDWAPI.Data;
 using MDWAPI.Dtos;
 using MDWAPI.Models;
@@ -231,4 +230,77 @@ VALUES
         }
         finally { if (needClose) await conn.CloseAsync(); }
     }
+
+    /// <summary>
+    /// คืนค่า "refresh" ถ้า AccessTokenExpAt < (UTCNow + graceMinutes), ไม่พบแถว → "refresh"
+    /// คืนค่า "use token" ถ้าอายุเกิน 10 นาทีขึ้นไป
+    /// </summary>
+    public async Task<string> GetCheckExpireAsync(
+        string channel,
+        string environment,
+        long? partnerId,
+        string? appKey,
+        long? accountIdBig,
+        string? accountIdStr,
+        int graceMinutes,
+        CancellationToken ct)
+    {
+        // ใช้ 3-part name ตามที่คุณตัวอย่างไว้ (imw.mdw.ChannelTokens)
+        const string sql = @"
+;WITH cte AS (
+    SELECT TOP(1) ctqq.AccessTokenExpAt
+    FROM mdw.ChannelTokens ctqq WITH (NOLOCK)
+    WHERE ctqq.Channel = @channel
+      AND ctqq.Environment = @env
+      AND ctqq.isActive = 1
+      AND (@partnerId IS NULL OR ctqq.PartnerId = @partnerId)
+      AND (@appKey    IS NULL OR ctqq.AppKey     = @appKey)
+      AND (
+           (@accountIdBig IS NOT NULL AND ctqq.AccountIdBig = @accountIdBig) OR
+           (@accountIdStr IS NOT NULL AND ctqq.AccountIdStr = @accountIdStr)
+      )
+    ORDER BY ctqq.AccessTokenExpAt DESC, ctqq.Id DESC
+)
+SELECT CASE 
+         WHEN (SELECT COUNT(*) FROM cte) = 0 THEN 'refresh'
+         WHEN (SELECT AccessTokenExpAt FROM cte) < DATEADD(minute, @graceMinutes, SYSUTCDATETIME()) THEN 'refresh'
+         ELSE 'use token'
+       END AS check_exp;
+";
+
+        var conn = _db.Database.GetDbConnection();
+        var needClose = conn.State != ConnectionState.Open;
+        if (needClose) await conn.OpenAsync(ct);
+        try
+        {
+            var res = await conn.ExecuteScalarAsync<string>(
+                new CommandDefinition(sql, new
+                {
+                    channel,
+                    env = environment,
+                    partnerId,
+                    appKey,
+                    accountIdBig,
+                    accountIdStr,
+                    graceMinutes
+                }, cancellationToken: ct));
+
+            return string.IsNullOrWhiteSpace(res) ? "refresh" : res;
+        }
+        finally { if (needClose) await conn.CloseAsync(); }
+    }
+
+    /// <summary>
+    /// convenience: เช็คโดยใช้ shopId (AccountIdStr) อย่างเดียว (เช่น TikTok)
+    /// </summary>
+    public Task<string> GetCheckExpireByAccountStrAsync(
+        string channel,
+        string environment,
+        string accountIdStr,
+        int graceMinutes,
+        CancellationToken ct)
+        => GetCheckExpireAsync(channel, environment, partnerId: null, appKey: null,
+                               accountIdBig: null, accountIdStr: accountIdStr,
+                               graceMinutes: graceMinutes, ct);
+
 }
