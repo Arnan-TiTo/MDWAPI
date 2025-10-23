@@ -93,8 +93,8 @@ builder.Services.AddHttpClient("OrdersApi", (sp, http) =>
     var cfg = sp.GetRequiredService<IConfiguration>();
     var baseUrl = Environment.GetEnvironmentVariable("ORDERS_BASE_URL")
                   ?? cfg.GetValue<string>("OrdersApi:BaseUrl")
-                  //?? "https://madewe.vibeandchic.com";
-                  ?? "https://localhost:7192";
+                  ?? "https://madewe.vibeandchic.com";
+                  //?? "https://localhost:7192";
 
     http.BaseAddress = new Uri(baseUrl);
     http.Timeout = TimeSpan.FromSeconds(90);
@@ -123,9 +123,9 @@ builder.Services.AddHttpClient("OrdersApi", (sp, http) =>
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
     {
-        o.JsonSerializerOptions.PropertyNamingPolicy = null; // คงชื่อ field ตาม model
+        o.JsonSerializerOptions.PropertyNamingPolicy = null;
         o.JsonSerializerOptions.DefaultIgnoreCondition =
-            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull; // เขียน JSON แบบไม่รวม null
+            System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 
@@ -153,6 +153,17 @@ if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
         });
     });
 }
+
+// เปิด cor ให้โดเมนที่ลงทะเบียน/callback.html
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("CallbackCors", p => p
+        .WithOrigins("https://vibeandchic.com") 
+        .WithMethods("POST", "OPTIONS")
+        .AllowAnyHeader()
+    );
+});
+
 
 // ===== HEALTH CHECKS =====
 builder.Services.AddHealthChecks();
@@ -198,6 +209,7 @@ if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
 app.MapHealthChecks("/health");
 
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 

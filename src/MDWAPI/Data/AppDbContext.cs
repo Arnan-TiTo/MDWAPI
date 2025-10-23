@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     public DbSet<UnifiedOrderPayments> UnifiedOrderPayments => Set<UnifiedOrderPayments>();
     public DbSet<UnifiedOrderShipments> UnifiedOrderShipments => Set<UnifiedOrderShipments>();
     public DbSet<UnifiedOrderAddresses> UnifiedOrderAddresses => Set<UnifiedOrderAddresses>();
+    public DbSet<VUnifiedOrder> VUnifiedOrders => Set<VUnifiedOrder>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -144,6 +145,12 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Trans)
                 .WithMany(h => h.Items)
                 .HasForeignKey(x => x.TransId);
+        });
+
+        modelBuilder.Entity<VUnifiedOrder>(e =>
+        {
+            e.HasNoKey(); // keyless (view)
+            e.ToView("v_UnifiedOrders", "mdw");
         });
     }
 }

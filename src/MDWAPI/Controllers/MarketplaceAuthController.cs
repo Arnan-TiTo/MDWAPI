@@ -3,6 +3,7 @@ using MDWAPI.Dtos;
 using MDWAPI.Repos; // ใช้ IChannelTokenRepo
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MDWAPI.Controllers
@@ -93,6 +94,23 @@ namespace MDWAPI.Controllers
                 _log.LogError(ex, "GetAuthLink failed");
                 return StatusCode(StatusCodes.Status500InternalServerError, new { success = false, error = ex.Message });
             }
+        }
+
+        public record ExchangeCbDto(string Platform, long ShopId, string Code, string State);
+
+        [HttpPost("exchange-cb")]
+        [AllowAnonymous]                     // อนุญาตไม่ต้องล็อกอิน
+        [EnableCors("CallbackCors")]         // policy CORS เฉพาะ action
+        [IgnoreAntiforgeryToken]             // กันกรณีมี AutoValidateAntiForgeryToken ทั่วระบบ
+        public async Task<IActionResult> ExchangeFromCallback([FromBody] ExchangeCbDto dto, CancellationToken ct)
+        {
+            // TODO: แนะนำตรวจความถูกต้องของ state (เช่น HMAC + หมดอายุ) ก่อนแลกจริง
+            if (string.IsNullOrWhiteSpace(dto.Platform) || dto.ShopId <= 0 || string.IsNullOrWhiteSpace(dto.Code))
+                return BadRequest(new { success = false, error = "invalid_payload" });
+
+            var platform = Enum.Parse<Platform>(dto.Platform, ignoreCase: true);
+            var result = await _svc.ExchangeCodeByShopAsync(platform, dto.ShopId, dto.Code, ct);
+            return Ok(new { success = true, result });
         }
 
         // =========================
