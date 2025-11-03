@@ -17,7 +17,7 @@ var builder = WebApplication.CreateBuilder(args);
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
   //?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
-  ?? "Server=localhost;Database=imw;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
 builder.Services.AddDbContext<AppDbContext>(
@@ -174,7 +174,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+        db.Database.EnsureCreated();
 
     if (!db.Users.Any(u => u.Username == "admin"))
     {
