@@ -15,8 +15,7 @@ public class DbTokenAuthenticationHandler : AuthenticationHandler<Authentication
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        ISystemClock clock,
-        AppDbContext db) : base(options, logger, encoder, clock)
+        AppDbContext db) : base(options, logger, encoder)
     {
         _db = db;
     }

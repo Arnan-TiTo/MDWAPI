@@ -28,6 +28,10 @@ public class AppDbContext : DbContext
     public DbSet<UnifiedOrderAddresses> UnifiedOrderAddresses => Set<UnifiedOrderAddresses>();
     public DbSet<VUnifiedOrder> VUnifiedOrders => Set<VUnifiedOrder>();
 
+    // --views ADW-- 
+    public DbSet<VwOrderMerged> VwOrderMerged { get; set; } = default!;
+    public DbSet<VwOrderMergedItem> VwOrderMergedItems { get; set; } = default!;
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -152,5 +156,15 @@ public class AppDbContext : DbContext
             e.HasNoKey(); // keyless (view)
             e.ToView("v_UnifiedOrders", "mdw");
         });
+
+        // --views ADW--
+        modelBuilder.Entity<VwOrderMerged>()
+          .HasNoKey()
+          .ToView("vw_OrderMerged", schema: "adw");
+
+        modelBuilder.Entity<VwOrderMergedItem>()
+          .HasNoKey()
+          .ToView("vw_OrderMergedItems", schema: "adw");
     }
+
 }
