@@ -16,8 +16,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-  //?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
-  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+  //?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
 builder.Services.AddDbContext<AppDbContext>(
@@ -154,12 +154,13 @@ if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
     });
 }
 
-// เปิด cor ให้โดเมนที่ลงทะเบียน/callback.html
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("CallbackCors", p => p
-        .WithOrigins("https://vibeandchic.com") 
-        .WithMethods("POST", "OPTIONS")
+        .WithOrigins("https://vibeandchic.com",
+                     "https://adwportal.vibeanchic.com",
+                     "https://localhost:5254")
+        .WithMethods("POST", "GET", "PUT", "DELETE", "OPTIONS")
         .AllowAnyHeader()
     );
 });
@@ -170,11 +171,11 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
-// seed admin
+//// seed admin
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        db.Database.EnsureCreated();
+    db.Database.EnsureCreated();
 
     if (!db.Users.Any(u => u.Username == "admin"))
     {

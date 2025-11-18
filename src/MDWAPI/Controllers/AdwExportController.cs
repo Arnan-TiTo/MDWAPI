@@ -40,7 +40,7 @@ namespace MDWAPI.Controllers
             if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
 
             var where = new StringBuilder(@"
-WHERE channel = @channel AND shop_id = @shopId");
+            WHERE channel = @channel AND shop_id = @shopId");
 
             if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
             if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
@@ -48,16 +48,16 @@ WHERE channel = @channel AND shop_id = @shopId");
             if (updatedTo.HasValue) where.Append(" AND updated_at_th <  @updatedToPlus");
 
             var sqlCount = $@"
-SELECT COUNT(1)
-FROM adw.vw_OrderExportFormatTH
-{where};";
+            SELECT COUNT(1)
+            FROM adw.vw_OrderExportFormatTH
+            {where};";
 
             var sqlData = $@"
-SELECT *
-FROM adw.vw_OrderExportFormatTH
-{where}
-ORDER BY created_at_th, order_no, qty_sold
-OFFSET @offset ROWS FETCH NEXT @take ROWS ONLY;";
+            SELECT *
+            FROM adw.vw_OrderExportFormatTH
+            {where}
+            ORDER BY created_at_th, order_no, qty_sold
+            OFFSET @offset ROWS FETCH NEXT @take ROWS ONLY;";
 
             DateTime? createdToPlus = createdTo?.Date.AddDays(1);
             DateTime? updatedToPlus = updatedTo?.Date.AddDays(1);
@@ -98,7 +98,7 @@ OFFSET @offset ROWS FETCH NEXT @take ROWS ONLY;";
             if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
 
             var where = new StringBuilder(@"
-WHERE channel = @channel AND shop_id = @shopId");
+            WHERE channel = @channel AND shop_id = @shopId");
 
             if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
             if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
@@ -106,10 +106,10 @@ WHERE channel = @channel AND shop_id = @shopId");
             if (updatedTo.HasValue) where.Append(" AND updated_at_th <  @updatedToPlus");
 
             var sql = $@"
-SELECT *
-FROM adw.vw_OrderExportFormatTH
-{where}
-ORDER BY created_at_th, order_no, qty_sold;";
+            SELECT *
+            FROM adw.vw_OrderExportFormatTH
+            {where}
+            ORDER BY created_at_th, order_no, qty_sold;";
 
             DateTime? createdToPlus = createdTo?.Date.AddDays(1);
             DateTime? updatedToPlus = updatedTo?.Date.AddDays(1);
@@ -168,7 +168,7 @@ ORDER BY created_at_th, order_no, qty_sold;";
             if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
 
             var where = new StringBuilder(@"
-WHERE channel = @channel AND shop_id = @shopId");
+            WHERE channel = @channel AND shop_id = @shopId");
 
             if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
             if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
@@ -176,10 +176,10 @@ WHERE channel = @channel AND shop_id = @shopId");
             if (updatedTo.HasValue) where.Append(" AND updated_at_th <  @updatedToPlus");
 
             var sql = $@"
-SELECT *
-FROM adw.vw_OrderExportFormatTH
-{where}
-ORDER BY created_at_th, order_no, qty_sold;";
+            SELECT *
+            FROM adw.vw_OrderExportFormatTH
+            {where}
+            ORDER BY created_at_th, order_no, qty_sold;";
 
             DateTime? createdToPlus = createdTo?.Date.AddDays(1);
             DateTime? updatedToPlus = updatedTo?.Date.AddDays(1);

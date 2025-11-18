@@ -35,10 +35,10 @@ namespace MDWAPI.Controllers
         );
 
         public sealed record PagedResult<T>(
-            int Total,
+            int TotalItems,
             int Page,
-            int PageSize,
-            IEnumerable<T> Data
+            int Size,
+            IEnumerable<T> Items
         );
 
         // ====== OPTIONS (กัน 405 จาก preflight CORS) ======
@@ -52,13 +52,14 @@ namespace MDWAPI.Controllers
         public async Task<ActionResult<PagedResult<UnifiedOrderListItemDto>>> List(
             [FromQuery] string? channel,
             [FromQuery] long? shopId,
-            [FromQuery] string? q,           // ค้นหา ExternalOrderNo / SellerId แบบ contains
+            [FromQuery] string? q,
             [FromQuery] string? status,
             [FromQuery] DateTime? fromUtc,
             [FromQuery] DateTime? toUtc,
+            [FromQuery] string dateField = "updated",
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50,
-            [FromQuery] string? sort = "createdDesc",
+            [FromQuery] string? sort = "updatedDesc",
             CancellationToken ct = default)
         {
             if (page <= 0) page = 1;
@@ -80,20 +81,36 @@ namespace MDWAPI.Controllers
                 var kw = q.Trim();
                 qy = qy.Where(o =>
                     (o.ExternalOrderNo ?? "").Contains(kw) ||
-                    (o.SellerId ?? "").Contains(kw)
+                    (o.SellerId ?? "").Contains(kw) ||
+                    o.UnifiedOrderId.ToString().Contains(kw)
                 );
             }
 
             if (fromUtc.HasValue)
-                qy = qy.Where(o => o.CreatedTimeUtc >= fromUtc.Value);
+            {
+                qy = dateField.ToLowerInvariant() switch
+                {
+                    "updated" => qy.Where(o => o.UpdatedTimeUtc.HasValue && o.UpdatedTimeUtc.Value >= fromUtc.Value),
+                    _ => qy.Where(o => o.CreatedTimeUtc >= fromUtc.Value)
+                };
+            }
+
             if (toUtc.HasValue)
-                qy = qy.Where(o => o.CreatedTimeUtc < toUtc.Value);
+            {
+                qy = dateField.ToLowerInvariant() switch
+                {
+                    "updated" => qy.Where(o => o.UpdatedTimeUtc.HasValue && o.UpdatedTimeUtc.Value <= toUtc.Value),
+                    _ => qy.Where(o => o.CreatedTimeUtc <= toUtc.Value)
+                };
+            }
 
             // sort
-            qy = sort?.ToLowerInvariant() switch
+            qy = (sort ?? "").ToLowerInvariant() switch
             {
                 "createdasc" => qy.OrderBy(o => o.CreatedTimeUtc).ThenBy(o => o.UnifiedOrderId),
-                _ => qy.OrderByDescending(o => o.CreatedTimeUtc).ThenByDescending(o => o.UnifiedOrderId),
+                "createddesc" => qy.OrderByDescending(o => o.CreatedTimeUtc).ThenByDescending(o => o.UnifiedOrderId),
+                "updatedasc" => qy.OrderBy(o => o.UpdatedTimeUtc).ThenBy(o => o.UnifiedOrderId),
+                _ => qy.OrderByDescending(o => o.UpdatedTimeUtc).ThenByDescending(o => o.UnifiedOrderId),
             };
 
             var total = await qy.CountAsync(ct);
@@ -117,7 +134,13 @@ namespace MDWAPI.Controllers
                 ))
                 .ToListAsync(ct);
 
-            return Ok(new PagedResult<UnifiedOrderListItemDto>(total, page, pageSize, data));
+            // *** ตรงกับ PagedResult ของ FE ***
+            return Ok(new PagedResult<UnifiedOrderListItemDto>(
+                TotalItems: total,
+                Page: page,
+                Size: pageSize,
+                Items: data
+            ));
         }
 
         // ====== GET by UnifiedOrderId ======

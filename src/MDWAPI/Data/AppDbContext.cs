@@ -8,6 +8,7 @@ public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
+    public DbSet<ChannelToken> ChannelTokens { get; set; }
     public DbSet<User> Users => Set<User>();
     public DbSet<UserToken> UserTokens => Set<UserToken>();
     public DbSet<Misc> Misc => Set<Misc>();
@@ -69,6 +70,11 @@ public class AppDbContext : DbContext
 
 
         // mdw 
+        // ChannelTokens
+        modelBuilder.Entity<ChannelToken>()
+            .ToTable("ChannelTokens", "mdw", t => t.ExcludeFromMigrations())
+            .HasKey(t => t.Id);
+
         // ----- Partner → ตาราง mdw.Partners -----
         modelBuilder.Entity<Partners>(e =>
         {

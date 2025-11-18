@@ -1,6 +1,6 @@
 ﻿using MDWAPI.Common;
 using MDWAPI.Dtos;
-using MDWAPI.Repos; // ใช้ IChannelTokenRepo
+using MDWAPI.Repos;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
@@ -18,7 +18,7 @@ namespace MDWAPI.Controllers
         private readonly LazadaAuthLinkService _lazadaLink;
         private readonly TiktokAuthLinkService _tiktokLink;
         private readonly ShopeeTokenRefreshService _shopeeRefresh;
-        private readonly IChannelTokenRepo _chanTokens;          // <<— เหลือ repo นี้อย่างเดียว
+        private readonly IChannelTokenRepo _chanTokens;
         private readonly ILogger<MarketplaceAuthController> _log;
 
         public MarketplaceAuthController(
