@@ -65,7 +65,7 @@ ORDER BY AccessTokenExpAt DESC, Id DESC;";
     {
         const string sql = @"
 SELECT TOP (1) *
-FROM imw.mdw.ChannelTokens WITH (NOLOCK)
+FROM mdw.ChannelTokens WITH (NOLOCK)
 WHERE Channel = 'tiktok'
   AND (AccountIdStr = @shopId OR AccountIdBig = TRY_CAST(@shopId AS BIGINT)
        OR AccountIdStrNorm = @shopId OR AccountIdBigStr = @shopId)
@@ -245,7 +245,7 @@ VALUES
         int graceMinutes,
         CancellationToken ct)
     {
-        // ใช้ 3-part name ตามที่คุณตัวอย่างไว้ (imw.mdw.ChannelTokens)
+        // ใช้ 3-part name ตามที่คุณตัวอย่างไว้ (mdw.ChannelTokens)
         const string sql = @"
 ;WITH cte AS (
     SELECT TOP(1) ctqq.AccessTokenExpAt

@@ -2,7 +2,7 @@
 
 namespace MDWAPI.Entities
 {
-    // map: imw.dbo.Misc
+    // map: dbo.Misc
     public class Misc
     {
         public int Id { get; set; }
