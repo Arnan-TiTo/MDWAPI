@@ -4,6 +4,8 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Linq;
 
 namespace MDWAPI.Services
 {
@@ -44,7 +46,6 @@ namespace MDWAPI.Services
             const string ver = "202309";
             var path = $"/order/{ver}/orders";
 
-            // 1) access_token / appKey / env
             var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
                 channel: channel,
                 environment: defaultEnv,
@@ -54,67 +55,65 @@ namespace MDWAPI.Services
                 accountIdStr: shopId.ToString(),
                 ct: ct);
 
+            if (string.IsNullOrWhiteSpace(accessToken))
+                throw new InvalidOperationException("TikTok accessToken missing for this shop.");
             if (string.IsNullOrWhiteSpace(appKey))
                 throw new InvalidOperationException("TikTok appKey missing for this shop.");
 
-            // 2) app_secret (อ่านจาก ExtraJson ของ token แถวเดียวกันก่อน)
             var appSecret = await _resolver.ResolveAppSecretAsync(
                 channel: channel,
                 environment: env,
-                partnersId: 0,                  // ใช้ 0 เพื่อบังคับอ่านจาก ChannelTokens.ExtraJson ก่อน
+                partnersId: 0,
                 appKey: appKey!,
                 accountIdStr: shopId.ToString(),
                 ct: ct);
 
-            // 3) shop_cipher (ถ้า controller ไม่ส่งมา ลองโหลดจากตาราง)
             if (string.IsNullOrWhiteSpace(shopCipher))
             {
-                shopCipher = await _resolver.ResolveShopCipherAsync(
-                                 channel: channel,
-                                 environment: env,
-                                 appKey: appKey!,
-                                 accountIdStr: shopId.ToString(),
-                                 ct: ct)
-                             ?? throw new InvalidOperationException("TikTok shop_cipher not found. Please refresh auth first.");
+                shopCipher = await EnsureShopCipherAsync(
+                    shopId: shopId,
+                    env: env,
+                    appKey: appKey!,
+                    appSecret: appSecret,
+                    accessToken: accessToken,
+                    ct: ct);
             }
 
             var host = _resolver.HostFor(channel, env);
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            // === build query ===
             var q = new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["app_key"] = appKey,
                 ["sign_method"] = "sha256",
                 ["timestamp"] = ts,
                 ["shop_cipher"] = shopCipher,
-                ["ids"] = idsCsv
+                ["ids"] = idsCsv,
+
+                // ใส่ access_token ใน query ได้ (และถูกตัดออกจาก sign โดย BuildSignDocSpec)
+                ["access_token"] = accessToken
             };
 
-            // เซ็นตามสเปค (GET ไม่มี body)
-            var sign = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
-            q["sign"] = sign;
+            q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
 
             var url = QueryHelpers.AddQueryString($"{host}{path}", q);
+
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("x-tts-access-token", accessToken);
             req.Headers.Accept.ParseAdd("application/json");
 
             _log.LogInformation("TikTok GET {Url}", url);
 
-            using var http = _http.CreateClient("Shopee"); // ใช้ชื่อ client เดิมของคุณ
+            using var http = _http.CreateClient("TikTok");
             using var resp = await http.SendAsync(req, ct);
             var text = await resp.Content.ReadAsStringAsync(ct);
 
             if (!resp.IsSuccessStatusCode)
-                throw new HttpRequestException($"TikTok /order/{ver}/orders failed: {(int)resp.StatusCode} | {text}");
+                throw new HttpRequestException($"TikTok {path} failed: {(int)resp.StatusCode} | {text}");
 
             return text;
         }
 
-        /// <summary>
-        /// wrapper: id เดียว (เรียก /order/202309/orders ด้วย ids=เดี่ยว)
-        /// </summary>
         public Task<string> GetOrderDetailRawAsync(
             long shopId,
             string orderRef,
@@ -133,12 +132,12 @@ namespace MDWAPI.Services
 
         public async Task<string> GetOrderListRawAsync(
             long shopId,
-            long timeFrom,                // Unix seconds
-            long timeTo,                  // Unix seconds
-            int pageSize,                 // e.g. 20
-            string? cursor,               // page_token
-            string? status,               // order_status (เช่น "UNPAID", "TO_SHIP", ...)
-            string? shopCipher,           // null ได้ เดี๋ยวไป resolve ให้
+            long timeFrom,
+            long timeTo,
+            int pageSize,
+            string? cursor,
+            string? status,
+            string? shopCipher,
             CancellationToken ct)
         {
             const string channel = "tiktok";
@@ -146,7 +145,6 @@ namespace MDWAPI.Services
             const string ver = "202309";
             var path = $"/order/{ver}/orders/search";
 
-            // 1) ดึง access_token / appKey / env จาก resolver
             var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
                 channel: channel,
                 environment: defaultEnv,
@@ -156,34 +154,33 @@ namespace MDWAPI.Services
                 accountIdStr: shopId.ToString(),
                 ct: ct);
 
+            if (string.IsNullOrWhiteSpace(accessToken))
+                throw new InvalidOperationException("TikTok accessToken missing for this shop.");
             if (string.IsNullOrWhiteSpace(appKey))
                 throw new InvalidOperationException("TikTok appKey missing for this shop.");
 
-            // 2) app_secret
             var appSecret = await _resolver.ResolveAppSecretAsync(
                 channel: channel,
                 environment: env,
-                partnersId: 0,                      // บังคับอ่านจาก ChannelTokens.ExtraJson ก่อน
+                partnersId: 0,
                 appKey: appKey!,
                 accountIdStr: shopId.ToString(),
                 ct: ct);
 
-            // 3) shop_cipher (resolve ถ้า controller ไม่ส่งมา)
             if (string.IsNullOrWhiteSpace(shopCipher))
             {
-                shopCipher = await _resolver.ResolveShopCipherAsync(
-                                 channel: channel,
-                                 environment: env,
-                                 appKey: appKey!,
-                                 accountIdStr: shopId.ToString(),
-                                 ct: ct)
-                             ?? throw new InvalidOperationException("TikTok shop_cipher not found. Please refresh auth first.");
+                shopCipher = await EnsureShopCipherAsync(
+                    shopId: shopId,
+                    env: env,
+                    appKey: appKey!,
+                    appSecret: appSecret,
+                    accessToken: accessToken,
+                    ct: ct);
             }
 
             var host = _resolver.HostFor(channel, env);
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            // 4) Query params (สำหรับ URL + ใช้ในการ sign)
             var q = new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["app_key"] = appKey,
@@ -191,33 +188,33 @@ namespace MDWAPI.Services
                 ["timestamp"] = ts,
                 ["shop_cipher"] = shopCipher,
                 ["page_size"] = pageSize.ToString(),
-                // เอกสารมีตัวเลือก sort_field / sort_order; ตั้งค่า default ให้
                 ["sort_field"] = "create_time",
-                ["sort_order"] = "ASC"
+                ["sort_order"] = "ASC",
+
+                // ใส่ access_token ใน query ได้
+                ["access_token"] = accessToken
             };
+
             if (!string.IsNullOrWhiteSpace(cursor))
                 q["page_token"] = cursor;
 
-            // 5) Body (JSON) — จะถูกนับรวมใน stringToSign (เพราะ content-type เป็น application/json)
             var bodyObj = new
             {
-                order_status = string.IsNullOrWhiteSpace(status) ? null : status,   // ex: "UNPAID"
+                order_status = string.IsNullOrWhiteSpace(status) ? null : status,
                 create_time_ge = timeFrom,
-                create_time_lt = timeTo,
-                // เลือกเพิ่ม filter อื่น ๆ ได้ เช่น update_time_ge/lt, shipping_type, buyer_user_id, warehouse_ids ฯลฯ
+                create_time_lt = timeTo
             };
 
             var bodyJson = JsonSerializer.Serialize(
                 bodyObj,
-                new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+                new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull });
+
             var bodyBytes = Encoding.UTF8.GetBytes(bodyJson);
 
-            // 6) สร้างลายเซ็นตามสเปค (รวม body)
-            var sign = BuildSignDocSpec(appSecret, path, q, bodyBytes);
-            q["sign"] = sign;
+            q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyBytes);
 
-            // 7) สร้าง URL + ส่งคำขอ
             var url = QueryHelpers.AddQueryString($"{host}{path}", q);
+
             using var req = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
@@ -227,18 +224,214 @@ namespace MDWAPI.Services
 
             _log.LogInformation("TikTok POST {Url} | body={Body}", url, bodyJson);
 
-            using var http = _http.CreateClient("Shopee");
+            using var http = _http.CreateClient("TikTok");
             using var resp = await http.SendAsync(req, ct);
             var text = await resp.Content.ReadAsStringAsync(ct);
 
             if (!resp.IsSuccessStatusCode)
-                throw new HttpRequestException($"TikTok /order/{ver}/orders/search failed: {(int)resp.StatusCode} | {text}");
+                throw new HttpRequestException($"TikTok {path} failed: {(int)resp.StatusCode} | {text}");
 
             return text;
         }
 
+        // =========================================================
+        // Cipher: DB -> shops API -> throw (พร้อมรายละเอียดจริง)
+        // =========================================================
+        private async Task<string> EnsureShopCipherAsync(
+            long shopId,
+            string env,
+            string appKey,
+            string appSecret,
+            string accessToken,
+            CancellationToken ct)
+        {
+            var shopIdStr = shopId.ToString();
+
+            // 1) จาก DB ก่อน
+            var cipher = await _resolver.ResolveShopCipherAsync("tiktok", env, appKey, shopIdStr, ct);
+            if (!string.IsNullOrWhiteSpace(cipher))
+                return cipher;
+
+            // 2) จาก shops API พร้อม diagnostic
+            var diag = await FetchShopCipherFromApiVerboseAsync(env, appKey, appSecret, accessToken, shopIdStr, ct);
+
+            if (!string.IsNullOrWhiteSpace(diag.cipher))
+            {
+                await _resolver.UpsertShopCipherAsync("tiktok", env, appKey, shopIdStr, diag.cipher!, ct);
+                return diag.cipher!;
+            }
+
+            // ✅ ตรงนี้คุณจะได้ “เหตุผลจริง” ไปเลย
+            throw new InvalidOperationException(
+                "TikTok shop_cipher not found.\n" +
+                $"shopId={shopIdStr} env={env} appKey={appKey}\n" +
+                $"shopsApiStatus={(diag.httpStatus?.ToString() ?? "n/a")} code={(diag.apiCode?.ToString() ?? "n/a")} message={diag.apiMessage ?? "n/a"}\n" +
+                $"url={diag.url}\n" +
+                $"gotShopIds=[{string.Join(",", diag.gotShopIds ?? Array.Empty<string>())}]\n" +
+                $"body={diag.body}"
+            );
+        }
+
+        private async Task<(string? cipher,
+                            int? httpStatus,
+                            int? apiCode,
+                            string? apiMessage,
+                            string? url,
+                            string? body,
+                            string[]? gotShopIds)> FetchShopCipherFromApiVerboseAsync(
+            string env,
+            string appKey,
+            string appSecret,
+            string accessToken,
+            string shopIdStr,
+            CancellationToken ct)
+        {
+            const string ver = "202309";
+            var host = _resolver.HostFor("tiktok", env);
+            var path = $"/authorization/{ver}/shops";
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["app_key"] = appKey,
+                ["sign_method"] = "sha256",
+                ["timestamp"] = ts,
+                ["access_token"] = accessToken
+            };
+
+            q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
+
+            var url = QueryHelpers.AddQueryString($"{host}{path}", q);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Accept.ParseAdd("application/json");
+            req.Headers.TryAddWithoutValidation("x-tts-access-token", accessToken);
+
+            using var http = _http.CreateClient("TikTok");
+            using var resp = await http.SendAsync(req, ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _log.LogWarning("TikTok shops list HTTP failed: {Status} url={Url} body={Body}",
+                    (int)resp.StatusCode, url, text);
+
+                return (null, (int)resp.StatusCode, null, null, url, text, null);
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+
+                int? apiCode = null;
+                string? apiMessage = null;
+
+                if (root.TryGetProperty("code", out var cEl) && cEl.ValueKind == JsonValueKind.Number)
+                    apiCode = cEl.GetInt32();
+
+                if (root.TryGetProperty("message", out var mEl) && mEl.ValueKind == JsonValueKind.String)
+                    apiMessage = mEl.GetString();
+
+                // code != 0 -> ส่งกลับไว้ให้ throw เห็นเหตุผล
+                if (apiCode.HasValue && apiCode.Value != 0)
+                {
+                    _log.LogWarning("TikTok shops list returned code={Code} message={Message} url={Url} body={Body}",
+                        apiCode, apiMessage, url, text);
+
+                    return (null, (int)resp.StatusCode, apiCode, apiMessage, url, text, null);
+                }
+
+                if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                    return (null, (int)resp.StatusCode, apiCode, apiMessage, url, text, null);
+
+                if (!data.TryGetProperty("shops", out var shops) || shops.ValueKind != JsonValueKind.Array)
+                    return (null, (int)resp.StatusCode, apiCode, apiMessage, url, text, null);
+
+                // หา shop ที่ id ตรง
+                foreach (var s in shops.EnumerateArray())
+                {
+                    if (s.ValueKind != JsonValueKind.Object) continue;
+
+                    var id = ReadShopIdAsString(s);
+                    if (!string.Equals(id, shopIdStr, StringComparison.Ordinal))
+                        continue;
+
+                    var cipher = ReadCipher(s);
+                    if (!string.IsNullOrWhiteSpace(cipher))
+                        return (cipher, (int)resp.StatusCode, apiCode, apiMessage, url, text, null);
+                }
+
+                // code==0 แต่ไม่ match -> เก็บ list ของ ids เพื่อ debug
+                var gotIds = shops.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.Object)
+                    .Select(ReadShopIdAsString)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct()
+                    .ToArray();
+
+                _log.LogWarning("TikTok shops list OK but shopId not matched. want={Want} got=[{Got}] url={Url}",
+                    shopIdStr, string.Join(",", gotIds), url);
+
+                return (null, (int)resp.StatusCode, apiCode, apiMessage, url, text, gotIds);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "TikTok shops list parse failed. url={Url} body={Body}", url, text);
+                return (null, (int)resp.StatusCode, null, null, url, text, null);
+            }
+        }
+
+        // -----------------------------
+        // JSON helpers (รองรับ id เป็น number/string)
+        // -----------------------------
+        private static string? ReadShopIdAsString(JsonElement shopObj)
+        {
+            if (shopObj.TryGetProperty("id", out var idEl))
+            {
+                if (idEl.ValueKind == JsonValueKind.String) return idEl.GetString();
+                if (idEl.ValueKind == JsonValueKind.Number) return idEl.TryGetInt64(out var v) ? v.ToString() : null;
+            }
+
+            if (shopObj.TryGetProperty("shop_id", out var sid))
+            {
+                if (sid.ValueKind == JsonValueKind.String) return sid.GetString();
+                if (sid.ValueKind == JsonValueKind.Number) return sid.TryGetInt64(out var v) ? v.ToString() : null;
+            }
+
+            if (shopObj.TryGetProperty("shopId", out var sid2))
+            {
+                if (sid2.ValueKind == JsonValueKind.String) return sid2.GetString();
+                if (sid2.ValueKind == JsonValueKind.Number) return sid2.TryGetInt64(out var v) ? v.ToString() : null;
+            }
+
+            if (shopObj.TryGetProperty("account_id", out var aid))
+            {
+                if (aid.ValueKind == JsonValueKind.String) return aid.GetString();
+                if (aid.ValueKind == JsonValueKind.Number) return aid.TryGetInt64(out var v) ? v.ToString() : null;
+            }
+
+            if (shopObj.TryGetProperty("accountId", out var aid2))
+            {
+                if (aid2.ValueKind == JsonValueKind.String) return aid2.GetString();
+                if (aid2.ValueKind == JsonValueKind.Number) return aid2.TryGetInt64(out var v) ? v.ToString() : null;
+            }
+
+            return null;
+        }
+
+        private static string? ReadCipher(JsonElement shopObj)
+        {
+            if (shopObj.TryGetProperty("cipher", out var c1) && c1.ValueKind == JsonValueKind.String) return c1.GetString();
+            if (shopObj.TryGetProperty("shop_cipher", out var c2) && c2.ValueKind == JsonValueKind.String) return c2.GetString();
+            if (shopObj.TryGetProperty("shopCipher", out var c3) && c3.ValueKind == JsonValueKind.String) return c3.GetString();
+            return null;
+        }
+
+        // -----------------------------
+        // Signing
+        // -----------------------------
         /// <summary>
-        /// สร้างลายเซ็นตามหน้า “Sign your API request”
         /// HMAC_SHA256(secret, secret + path + sortedQuery(excl. sign/access_token) + body(if any) + secret)
         /// </summary>
         private static string BuildSignDocSpec(

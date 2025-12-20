@@ -136,7 +136,8 @@ namespace MDWAPI.Services
                 appKey: appKey,
                 accountIdStr: shopId.ToString(),
                 ct: ct);
-            // 3) shop cipher (ถ้าไม่ส่งมา ให้พยายามอ่านจาก DB ก่อน; ถ้ายังไม่มีให้ดึงจาก API แล้ว cache ลง DB)
+
+            // 3) shop cipher (ถ้าไม่ส่งมาก็อ่านจาก DB)
             if (string.IsNullOrWhiteSpace(shopCipher))
             {
                 shopCipher = await _resolver.ResolveShopCipherAsync(
@@ -144,24 +145,10 @@ namespace MDWAPI.Services
                                  environment: env,
                                  appKey: appKey,
                                  accountIdStr: shopId.ToString(),
-                                 ct: ct);
-
-                if (string.IsNullOrWhiteSpace(shopCipher))
-                {
-                    shopCipher = await GetShopCipherAsync(
-                        shopId: shopId,
-                        version: version,
-                        channel: channel,
-                        defaultEnv: env,
-                        ct: ct);
-
-                    if (!string.IsNullOrWhiteSpace(shopCipher))
-                        await _resolver.UpsertShopCipherAsync(channel, env, appKey, shopId.ToString(), shopCipher, ct);
-                }
-
-                if (string.IsNullOrWhiteSpace(shopCipher))
-                    throw new InvalidOperationException("TikTok shop_cipher not found. Please reconnect/authorize the shop again.");
+                                 ct: ct)
+                             ?? throw new InvalidOperationException("TikTok shop_cipher not found. Please refresh auth first.");
             }
+
             // 4) build request
             var host = _resolver.HostFor(channel, env);
             var path = $"/order/{version}/orders/detail/query";
@@ -203,7 +190,7 @@ namespace MDWAPI.Services
             if (method != HttpMethod.Get && bodyUtf8 is { Length: > 0 })
                 req.Content = new ByteArrayContent(bodyUtf8);
 
-            using var http = _http.CreateClient("TikTok"); // reuse client profile เดิม
+            using var http = _http.CreateClient("Shopee"); // reuse client profile เดิม
             using var resp = await http.SendAsync(req, ct);
             var text = await resp.Content.ReadAsStringAsync(ct);
 

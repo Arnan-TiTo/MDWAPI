@@ -54,7 +54,7 @@ namespace MDWAPI.Services
 
             var (appKey, appSecret, env, partnerRowId) = await LoadPartnerAsync(partnersId, ct);
 
-            var http = _http.CreateClient("TikTok");
+            var http = _http.CreateClient("Tiktok");
             var tokenResp = await CallTokenGetAsync(http, appKey, appSecret, code, accountIdStr!, env, ct);
 
             if (tokenResp is null || tokenResp.data is null || tokenResp.code != 0)
@@ -150,7 +150,7 @@ namespace MDWAPI.Services
                 throw new InvalidOperationException("No refresh_token found for this TikTok account. Please reconnect the shop.");
 
             // ✅ FIX: ต้องเป็น Tiktok client ไม่ใช่ Shopee
-            var http = _http.CreateClient("TikTok");
+            var http = _http.CreateClient("Tiktok");
 
             var refreshResp = await CallTokenRefreshAsync(http, appKey, appSecret, row.RefreshToken!, accountIdStr!, env, ct);
 
@@ -347,8 +347,8 @@ namespace MDWAPI.Services
             var path = "/api/v2/token/get";
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            // ✅ NOTE: sign ต้องคำนวณจาก dict ที่ไม่มี sign/app_secret
-            var q = new Dictionary<string, string?>
+            // ใช้ dict สำหรับ sign (ไม่มี app_secret)
+            var qSign = new Dictionary<string, string?>
             {
                 ["app_key"] = appKey,
                 ["grant_type"] = "authorized_code",
@@ -357,11 +357,14 @@ namespace MDWAPI.Services
                 ["timestamp"] = ts
             };
 
-            var sign = BuildSign_Legacy(appSecret, path, q);
+            var sign = BuildSign_Legacy(appSecret, path, qSign);
 
-            // ✅ TikTok ต้องการ app_secret เป็น required parameter
-            q["sign"] = sign;
-            q["app_secret"] = appSecret;
+            // dict สำหรับ request จริง (มี app_secret)
+            var q = new Dictionary<string, string?>(qSign)
+            {
+                ["sign"] = sign,
+                ["app_secret"] = appSecret
+            };
 
             var url = QueryHelpers.AddQueryString($"{baseUri}{path}", q);
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -376,13 +379,20 @@ namespace MDWAPI.Services
         }
 
         private async Task<TikTokCommonResp<TokenRespData>> CallTokenRefreshAsync(
-            HttpClient http, string appKey, string appSecret, string refreshToken, string shopId, string env, CancellationToken ct)
+          HttpClient http,
+          string appKey,
+          string appSecret,
+          string refreshToken,
+          string shopId,
+          string env,
+          CancellationToken ct)
         {
             var baseUri = AuthHostFor(env);
             var path = "/api/v2/token/refresh";
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
 
-            var q = new Dictionary<string, string?>
+            // ใช้ dict สำหรับ sign (ไม่มี app_secret / sign)
+            var qSign = new Dictionary<string, string?>
             {
                 ["app_key"] = appKey,
                 ["grant_type"] = "refresh_token",
@@ -391,11 +401,14 @@ namespace MDWAPI.Services
                 ["timestamp"] = ts
             };
 
-            var sign = BuildSign_Legacy(appSecret, path, q);
+            var sign = BuildSign_Legacy(appSecret, path, qSign);
 
-            // ✅ required app_secret
-            q["sign"] = sign;
-            q["app_secret"] = appSecret;
+            // dict สำหรับ request จริง (มี app_secret)
+            var q = new Dictionary<string, string?>(qSign)
+            {
+                ["sign"] = sign,
+                ["app_secret"] = appSecret
+            };
 
             var url = QueryHelpers.AddQueryString($"{baseUri}{path}", q);
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -408,6 +421,7 @@ namespace MDWAPI.Services
             return JsonSerializer.Deserialize<TikTokCommonResp<TokenRespData>>(body)
                    ?? throw new HttpRequestException("token/refresh invalid json");
         }
+
 
         // --------- Get shop list (cipher) ----------
         /// <summary>
