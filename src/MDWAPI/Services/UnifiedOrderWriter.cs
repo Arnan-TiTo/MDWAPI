@@ -140,7 +140,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
                 ShopId = dto.ShopId,
                 SellerId = dto.SellerId,
                 ExternalOrderId = dto.ExternalOrderId,
-                ExternalOrderNo = dto.ExternalOrderNo ?? dto.ExternalOrderId,
+                ExternalOrderNo = string.IsNullOrWhiteSpace(dto.ExternalOrderNo) ? dto.ExternalOrderId : dto.ExternalOrderNo,
                 OrderStatus = dto.OrderStatus,
                 FulfillmentStatus = dto.FulfillmentStatus,
                 PaymentStatus = dto.PaymentStatus,
