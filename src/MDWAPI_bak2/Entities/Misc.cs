@@ -15,8 +15,8 @@ namespace MDWAPI.Entities
         public string? Value4 { get; set; }   // window spec: "-10m" หรือ "-10m;remember"
         public string? Value5 { get; set; }   // state: lastTo (epoch seconds) เป็น string
         public string? Note { get; set; }
-        public DateTime? CreatedAt { get; set; }
-        public DateTime? UpdatedAt { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
         public bool IsActive { get; set; }
     }
 }

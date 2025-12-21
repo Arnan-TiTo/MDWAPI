@@ -67,8 +67,6 @@ public class AppDbContext : DbContext
             e.Property(x => x.Value4).HasMaxLength(200);
             e.Property(x => x.Value5).HasMaxLength(200);
             e.Property(x => x.Note).HasMaxLength(500);
-            e.Property(x => x.CreatedAt).IsRequired(false);
-            e.Property(x => x.UpdatedAt).IsRequired(false);
         });
 
 

@@ -53,240 +53,123 @@ public class MarketJobHostedService : BackgroundService
         }
     }
 
-    private async Task SafeLogDbAsync(
-    AppDbContext db,
-    Guid runId,
-    string category,
-    string phase,
-    string? step,
-    string level,
-    string message,
-    int? jobId = null,
-    string? jobName = null,
-    int? httpStatus = null,
-    long? durationMs = null,
-    object? meta = null,
-    CancellationToken ct = default)
-    {
-        try
-        {
-            await LogDbAsync(db, runId,
-                category: category,
-                phase: phase,
-                step: step,
-                level: level,
-                message: message,
-                jobId: jobId,
-                jobName: jobName,
-                httpStatus: httpStatus,
-                durationMs: durationMs,
-                meta: meta,
-                ct: ct);
-        }
-        catch (Exception ex)
-        {
-            // อย่าให้ logging ทำ service ล้ม
-            _logger.LogError(ex, "LogDbAsync failed (category={category}, phase={phase}, step={step})", category, phase, step);
-        }
-    }
-
     private async Task RunOnceAsync(TimeSpan pollInterval, CancellationToken ct)
     {
-        Guid tickRunId = Guid.NewGuid();
-        int jobCount = 0;
-        Exception? tickEx = null;
-
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        // tick_start
-        await SafeLogDbAsync(db, tickRunId, category: "MarketJob",
-            phase: "tick_start", step: null, level: "INFO",
-            message: $"tick start (pollInterval={pollInterval})",
-            meta: new { pollInterval = pollInterval.ToString() }, ct: ct);
+        var tickRunId = Guid.NewGuid();
+        await LogDbAsync(db, tickRunId, category: "MarketJob", phase: "tick_start", step: null, level: "INFO",
+            message: $"tick start (pollInterval={pollInterval})", meta: new { pollInterval = pollInterval.ToString() }, ct: ct);
 
-        try
+        var nowUtc = DateTime.UtcNow;
+        var nowBkk = ToBangkok(nowUtc);
+
+        var jobs = await db.Misc
+            .Where(m => m.Type == "MarketJob" && m.IsActive)
+            .OrderBy(m => m.Id)
+            .ToListAsync(ct);
+
+        foreach (var j in jobs)
         {
-            var nowUtc = DateTime.UtcNow;
-            var nowBkk = ToBangkok(nowUtc);
-
-            var jobs = await db.Misc
-                .Where(m => m.Type == "MarketJob" && m.IsActive)
-                .OrderBy(m => m.Id)
-                .ToListAsync(ct);
-
-            jobCount = jobs.Count;
-
-            foreach (var j in jobs)
+            var jobRunId = Guid.NewGuid();
+            var jobSw = Stopwatch.StartNew();
+            try
             {
-                var jobRunId = Guid.NewGuid();
-                var jobSw = Stopwatch.StartNew();
-
-                await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                    phase: "job_start", step: null, level: "INFO",
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "job_start", step: null, level: "INFO",
                     message: "job start", jobId: j.Id, jobName: j.Name, ct: ct);
 
-                try
+                if (!IsDue(j, nowBkk, pollInterval, db))
                 {
-                    if (!IsDue(j, nowBkk, pollInterval, db))
-                    {
-                        await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                            phase: "skip", step: "IsDue", level: "INFO",
-                            message: "not due", jobId: j.Id, jobName: j.Name, ct: ct);
-                        continue;
-                    }
+                    await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "skip", step: "IsDue", level: "INFO",
+                        message: "not due", jobId: j.Id, jobName: j.Name, ct: ct);
+                    continue;
+                }
 
-                    var path = (j.Value2 ?? "").Trim();
-                    if (string.IsNullOrWhiteSpace(path))
-                    {
-                        await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                            phase: "skip", step: "Validate", level: "WARN",
-                            message: "empty path (Value2)", jobId: j.Id, jobName: j.Name, ct: ct);
-                        continue;
-                    }
+                var path = (j.Value2 ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "skip", step: "Validate", level: "WARN",
+                        message: "empty path (Value2)", jobId: j.Id, jobName: j.Name, ct: ct);
+                    continue;
+                }
 
-                    var baseQs = (j.Value3 ?? "").Trim().TrimStart('?');
+                var baseQs = (j.Value3 ?? "").Trim().TrimStart('?');
 
-                    // สร้าง windows
-                    var windows = BuildWindows(nowBkk, j.Value4, j.Value5);
-                    if (windows.Count == 0)
-                    {
-                        await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                            phase: "skip", step: "BuildWindows", level: "INFO",
-                            message: "no windows", jobId: j.Id, jobName: j.Name, ct: ct);
-                        continue;
-                    }
+                // สร้างหน้าต่างเวลาแบบ backfill + chunk + overlap (ทั้งหมดใน BKK time)
+                var windows = BuildWindows(nowBkk, j.Value4, j.Value5);
+                if (windows.Count == 0)
+                {
+                    await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "skip", step: "BuildWindows", level: "INFO",
+                        message: "no windows", jobId: j.Id, jobName: j.Name, ct: ct);
+                    continue;
+                }
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "step", step: "BuildWindows", level: "INFO",
+                    message: $"windows={windows.Count}", jobId: j.Id, jobName: j.Name, meta: new { count = windows.Count }, ct: ct);
 
-                    await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                        phase: "step", step: "BuildWindows", level: "INFO",
-                        message: $"windows={windows.Count}", jobId: j.Id, jobName: j.Name,
-                        meta: new { count = windows.Count }, ct: ct);
-
-                    var client = _httpFactory.CreateClient("OrdersApi");
-                    var bearer = await _tokenProvider.GetBearerAsync(ct);
-
-                    await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                        phase: "step", step: "GetBearer", level: "INFO",
-                        message: string.IsNullOrWhiteSpace(bearer) ? "no bearer" : "bearer loaded",
-                        jobId: j.Id, jobName: j.Name, ct: ct);
-
+                var client = _httpFactory.CreateClient("OrdersApi");
+                var bearer = await _tokenProvider.GetBearerAsync(ct);
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "step", step: "GetBearer", level: "INFO",
+                    message: string.IsNullOrWhiteSpace(bearer) ? "no bearer" : "bearer loaded", jobId: j.Id, jobName: j.Name, ct: ct);
+                if (!string.IsNullOrWhiteSpace(bearer))
+                {
                     client.DefaultRequestHeaders.Remove("Authorization");
-                    if (!string.IsNullOrWhiteSpace(bearer))
-                        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
-
-                    long finalTo = 0;
-
-                    foreach (var w in windows)
-                    {
-                        var finalQs = MergeQuery(baseQs, w.FromEpoch, w.ToEpoch);
-                        var winSw = Stopwatch.StartNew();
-
-                        await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                            phase: "task_start", step: "PostWindow", level: "INFO",
-                            message: "window start", jobId: j.Id, jobName: j.Name,
-                            meta: new { path, qs = finalQs, fromEpoch = w.FromEpoch, toEpoch = w.ToEpoch }, ct: ct);
-
-                        HttpResponseMessage? resp = null;
-                        string? body = null;
-                        int statusCode = 0;
-
-                        try
-                        {
-                            resp = await client.PostAsync(path + "?" + finalQs, content: null, ct);
-                            statusCode = (int)resp.StatusCode;
-                            body = await resp.Content.ReadAsStringAsync(ct);
-
-                            await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                                phase: "step", step: "PostWindow",
-                                level: resp.IsSuccessStatusCode ? "INFO" : "WARN",
-                                message: $"POST {statusCode} len={(body?.Length ?? 0)}",
-                                jobId: j.Id, jobName: j.Name,
-                                httpStatus: statusCode,
-                                durationMs: (long)winSw.ElapsedMilliseconds,
-                                meta: new { path, qs = finalQs, fromEpoch = w.FromEpoch, toEpoch = w.ToEpoch }, ct: ct);
-
-                            _logger.LogInformation(
-                                "Job [{id}:{name}] {status} POST {path}?{qs} | windowUTC {fromUtc}->{toUtc} | len={len}",
-                                j.Id, j.Name, statusCode, path, finalQs,
-                                DateTimeOffset.FromUnixTimeSeconds(w.FromEpoch).UtcDateTime,
-                                DateTimeOffset.FromUnixTimeSeconds(w.ToEpoch).UtcDateTime,
-                                body?.Length ?? 0);
-
-                            // ถ้าเจอ 401/403 จะ break ได้เลย (กันยิงซ้ำยาว ๆ)
-                            if (statusCode is 401 or 403)
-                            {
-                                throw new InvalidOperationException($"Auth failed status={statusCode} bodyLen={(body?.Length ?? 0)}");
-                            }
-
-                            finalTo = w.ToEpoch;
-                        }
-                        finally
-                        {
-                            winSw.Stop();
-                            resp?.Dispose();
-
-                            await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                                phase: "task_end", step: "PostWindow", level: "INFO",
-                                message: "window end", jobId: j.Id, jobName: j.Name,
-                                httpStatus: statusCode == 0 ? null : statusCode,
-                                durationMs: (long)winSw.ElapsedMilliseconds,
-                                meta: new { len = body?.Length ?? 0 }, ct: ct);
-                        }
-                    }
-
-                    // save watermark
-                    var behavior = ParseBehavior(j.Value4);
-                    j.UpdatedAt = DateTime.UtcNow;
-                    if (behavior.Remember && finalTo > 0)
-                        j.Value5 = finalTo.ToString(CultureInfo.InvariantCulture);
-
-                    await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                        phase: "step", step: "SaveWatermark", level: "INFO",
-                        message: "update UpdatedAt/watermark", jobId: j.Id, jobName: j.Name,
-                        meta: new { remember = behavior.Remember, finalTo }, ct: ct);
-
-                    await db.SaveChangesAsync(ct);
-
-                    jobSw.Stop();
-                    await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                        phase: "job_finish", step: null, level: "INFO",
-                        message: "job finish", jobId: j.Id, jobName: j.Name,
-                        durationMs: (long)jobSw.ElapsedMilliseconds, ct: ct);
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
                 }
-                catch (Exception ex)
+
+                long finalTo = 0;
+                foreach (var w in windows)
                 {
-                    _logger.LogError(ex, "Job {id}:{name} failed", j.Id, j.Name);
-                    jobSw.Stop();
+                    var finalQs = MergeQuery(baseQs, w.FromEpoch, w.ToEpoch);
+                    var winSw = Stopwatch.StartNew();
 
-                    await SafeLogDbAsync(db, jobRunId, category: "MarketJob",
-                        phase: "error", step: null, level: "ERROR",
-                        message: ex.Message, jobId: j.Id, jobName: j.Name,
-                        durationMs: (long)jobSw.ElapsedMilliseconds,
-                        meta: new { ex = ex.GetType().FullName, stack = ex.StackTrace }, ct: ct);
+                    using var resp = await client.PostAsync(path + "?" + finalQs, content: null, ct);
+                    var body = await resp.Content.ReadAsStringAsync(ct);
+                    winSw.Stop();
+                    await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "step", step: "PostWindow", level: resp.IsSuccessStatusCode ? "INFO" : "WARN",
+                        message: $"POST {(int)resp.StatusCode} len={(body?.Length ?? 0)}", jobId: j.Id, jobName: j.Name,
+                        httpStatus: (int)resp.StatusCode, durationMs: (long)winSw.ElapsedMilliseconds,
+                        meta: new { path, qs = finalQs, fromEpoch = w.FromEpoch, toEpoch = w.ToEpoch }, ct: ct);
+
+                    _logger.LogInformation(
+                        "Job [{id}:{name}] {status} POST {path}?{qs} | windowUTC {fromUtc}->{toUtc} | len={len}",
+                        j.Id, j.Name, (int)resp.StatusCode, path, finalQs,
+                        DateTimeOffset.FromUnixTimeSeconds(w.FromEpoch).UtcDateTime,
+                        DateTimeOffset.FromUnixTimeSeconds(w.ToEpoch).UtcDateTime,
+                        body?.Length ?? 0);
+
+                    finalTo = w.ToEpoch;
                 }
+
+                // อัปเดต timestamp และ watermark ถ้ามี remember
+                var behavior = ParseBehavior(j.Value4);
+                j.UpdatedAt = DateTime.UtcNow;
+                if (behavior.Remember && finalTo > 0)
+                    j.Value5 = finalTo.ToString(CultureInfo.InvariantCulture);
+
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "step", step: "SaveWatermark", level: "INFO",
+                    message: "update UpdatedAt/watermark", jobId: j.Id, jobName: j.Name,
+                    meta: new { remember = behavior.Remember, finalTo }, ct: ct);
+
+                await db.SaveChangesAsync(ct);
+
+                jobSw.Stop();
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "job_finish", step: null, level: "INFO",
+                    message: "job finish", jobId: j.Id, jobName: j.Name, durationMs: (long)jobSw.ElapsedMilliseconds, ct: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Job {id}:{name} failed", j.Id, j.Name);
+                jobSw.Stop();
+                await LogDbAsync(db, jobRunId, category: "MarketJob", phase: "error", step: null, level: "ERROR",
+                    message: ex.Message, jobId: j.Id, jobName: j.Name, durationMs: (long)jobSw.ElapsedMilliseconds,
+                    meta: new { ex = ex.GetType().FullName, stack = ex.StackTrace }, ct: ct);
             }
         }
-        catch (Exception ex)
-        {
-            // error ระดับ tick (นี่แหละที่ทำให้เห็นแค่ tick_start)
-            tickEx = ex;
-            _logger.LogError(ex, "MarketJob tick failed");
 
-            await SafeLogDbAsync(db, tickRunId, category: "MarketJob",
-                phase: "tick_error", step: null, level: "ERROR",
-                message: ex.Message,
-                meta: new { ex = ex.GetType().FullName, stack = ex.StackTrace }, ct: ct);
-        }
-        finally
-        {
-            // tick_finish ต้องพยายามเขียนเสมอ
-            await SafeLogDbAsync(db, tickRunId, category: "MarketJob",
-                phase: "tick_finish", step: null, level: tickEx == null ? "INFO" : "WARN",
-                message: $"tick finish (jobs={jobCount})",
-                meta: new { jobCount, hasError = tickEx != null }, ct: ct);
-        }
+        await LogDbAsync(db, tickRunId, category: "MarketJob", phase: "tick_finish", step: null, level: "INFO",
+            message: $"tick finish (jobs={jobs.Count})", meta: new { jobCount = jobs.Count }, ct: ct);
     }
-
 
     // ===== DB logging =====
     private static async Task LogDbAsync(
@@ -331,11 +214,6 @@ public class MarketJobHostedService : BackgroundService
 
     // ===== Scheduling =====
 
-    private static DateTime ToBangkok(DateTime? utcOrNull)
-    {
-        if (utcOrNull is null) return DateTime.MinValue; // หรือ return DateTime.UtcNow;
-        return ToBangkok(utcOrNull.Value);
-    }
 
     private static bool IsDue(Misc job, DateTime nowBkk, TimeSpan pollInterval, AppDbContext db)
     {
