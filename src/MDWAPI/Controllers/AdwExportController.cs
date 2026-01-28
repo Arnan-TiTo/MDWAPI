@@ -23,12 +23,12 @@ namespace MDWAPI.Controllers
         /// </summary>
         [HttpGet("flowaccount/orders")]
         public async Task<IActionResult> GetFlowAccountOrders(
-            [FromQuery] string channel,
-            [FromQuery] long shopId,
-            [FromQuery] DateTime? createdFrom,
-            [FromQuery] DateTime? createdTo,
-            [FromQuery] DateTime? updatedFrom,
-            [FromQuery] DateTime? updatedTo,
+            [FromQuery] string? channel = null,
+            [FromQuery] long shopId = 0,
+            [FromQuery] DateTime? createdFrom = null,
+            [FromQuery] DateTime? createdTo = null,
+            [FromQuery] DateTime? updatedFrom = null,
+            [FromQuery] DateTime? updatedTo = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 500,
             CancellationToken ct = default)
@@ -40,7 +40,17 @@ namespace MDWAPI.Controllers
             if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
 
             var where = new StringBuilder(@"
-            WHERE channel = @channel AND shop_id = @shopId");
+            WHERE 1=1 ");
+
+            if (!string.IsNullOrWhiteSpace(channel))
+            {
+                where.Append(" AND channel = @channel");
+            }
+
+            if (shopId > 0)
+            {
+                where.Append(" AND shop_id = @shopId");
+            }
 
             if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
             if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
