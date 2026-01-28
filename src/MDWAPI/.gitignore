@@ -5,7 +5,7 @@ out/
 artifacts/
 
 # Visual Studio
-.vs/
+*.vs/
 *.user
 *.suo
 *.userosscache
