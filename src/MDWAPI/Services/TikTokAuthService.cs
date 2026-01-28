@@ -96,7 +96,8 @@ namespace MDWAPI.Helpers
 
                 // ถ้า 404/400 จาก host นี้ ลอง host ถัดไป (ถ้ามี)
                 var last = host == Hosts[^1];
-                var bodyForLog = (text?.Length ?? 0) > 300 ? text[..300] + "..." : text;
+                //var bodyForLog = (text?.Length ?? 0) > 300 ? text[..300] + "..." : text;
+                var bodyForLog = (text is not null && text.Length > 300) ? text[..300] + "..." : text;
 
                 if (!last)
                     continue;

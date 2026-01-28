@@ -39,7 +39,7 @@ namespace MDWAPI.Controllers
             var jobs = await _db.UnifiedOrderTrans
                 .OrderByDescending(x => x.TransId)
                 .Take(20)
-                .Select(x => new JobLogDto
+                .Select(x => new UnifiedOrderTransDto
                 {
                     TransId = x.TransId,
                     Platform = x.Platform ?? "",
@@ -79,7 +79,7 @@ namespace MDWAPI.Controllers
         public string? TokenStatus { get; set; }
     }
 
-    public class JobLogDto
+    public class UnifiedOrderTransDto
     {
         public long TransId { get; set; }
         public string? Platform { get; set; }

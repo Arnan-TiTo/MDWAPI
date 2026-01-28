@@ -74,7 +74,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<JobLog>(e =>
         {
-            e.ToTable("JobLogs", "mdw");
+            e.ToTable("JobLogs", "dbo");
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.RunId);
             e.HasIndex(x => new { x.Category, x.CreatedAtUtc });
@@ -175,6 +175,12 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Trans)
                 .WithMany(h => h.Items)
                 .HasForeignKey(x => x.TransId);
+        });
+
+        // UnifiedOrders - Configure for trigger compatibility
+        modelBuilder.Entity<UnifiedOrders>(e =>
+        {
+            e.ToTable("UnifiedOrders", "mdw", tb => tb.HasTrigger("TR_UnifiedOrders_Update"));
         });
 
         modelBuilder.Entity<VUnifiedOrder>(e =>

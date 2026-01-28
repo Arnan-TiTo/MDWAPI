@@ -38,6 +38,7 @@ public class UnifiedOrders
     [MaxLength(80)] public string? WarehouseCode { get; set; }
 
     [MaxLength(120)] public string? BuyerUserId { get; set; }
+    [MaxLength(200)] public string? BuyerUsername { get; set; }
     [MaxLength(200)] public string? BuyerName { get; set; }
     [MaxLength(60)] public string? BuyerPhone { get; set; }
     [MaxLength(200)] public string? BuyerEmail { get; set; }

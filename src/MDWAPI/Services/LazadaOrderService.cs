@@ -149,7 +149,7 @@ public class LazadaOrderService
 
         var (accessToken, tokenEnv, _, _) = await _resolver.GetAccessTokenAsync(
             channel: "lazada",
-            environment: cfg.Environment,
+            environment: cfg.Environment ?? "prod",
             partnerId: null,
             appKey: null,
             accountIdBig: null,

@@ -31,9 +31,9 @@ public class AuthTokenProvider : IAuthTokenProvider
         if (!string.IsNullOrEmpty(_token) && DateTimeOffset.UtcNow < _expiresAtUtc - skew)
             return _token;
 
-        var baseUrl = _cfg["OrdersApi:BaseUrl"] ?? "https://localhost:7192";
-        var username = _cfg["Jobs:Auth:Username"] ?? "admin";
-        var password = _cfg["Jobs:Auth:Password"] ?? "123456yjm";
+        var baseUrl = _cfg["OrdersApi:BaseUrl"] ;
+        var username = _cfg["Jobs:Auth:Username"] ?? "adminJob";
+        var password = _cfg["Jobs:Auth:Password"] ?? "JobAdmin";
         var tokenTtl = _cfg.GetValue<int?>("Auth:TokenLifetimeMinutes") ?? 120;
 
         var client = _httpFactory.CreateClient("OrdersApi"); // BaseAddress ตั้งใน Program.cs

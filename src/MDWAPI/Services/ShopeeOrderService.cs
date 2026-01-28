@@ -169,7 +169,7 @@ public class ShopeeOrderService
 
         var (accessToken, tokenEnv, _, _) = await _resolver.GetAccessTokenAsync(
             channel: "shopee",
-            environment: cfg.Environment,
+            environment: cfg.Environment ?? "prod",
             partnerId: cfg.PartnerId,
             appKey: null,
             accountIdBig: shopId,

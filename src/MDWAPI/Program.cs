@@ -70,16 +70,46 @@ builder.Services.AddScoped<IUnifiedOrderWriter, UnifiedOrderWriter>();
 builder.Services.AddScoped<OrderNormalizeService>();
 builder.Services.AddScoped<IIngestionAuditService, IngestionAuditService>();
 
-// Auth token provider (login)
-builder.Services.AddSingleton<IAuthTokenProvider, AuthTokenProvider>();
+// Auth token provider (internal - for cronjob)
+builder.Services.AddSingleton<IAuthTokenProvider, InternalAuthTokenProvider>();
 
 // Background job
-builder.Services.AddHostedService<MarketJobHostedService>();
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Services.AddHostedService<MarketJobHostedService>();
+}
 
 // ===== HTTP CLIENTS =====
 builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds(30); });
 builder.Services.AddHttpClient("Lazada", c => { c.Timeout = TimeSpan.FromSeconds(30); });
-builder.Services.AddHttpClient("TikTok", c => { c.Timeout = TimeSpan.FromSeconds(30); });
+builder.Services.AddHttpClient("TikTok", c => { c.Timeout = TimeSpan.FromSeconds(30); })
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+    {
+        var config = sp.GetRequiredService<IConfiguration>();
+        var host = config["Proxy:Host"];
+        var port = config.GetValue<int>("Proxy:Port");
+
+        if (!string.IsNullOrWhiteSpace(host) && port > 0)
+        {
+            var proxy = new WebProxy(host, port);
+            var user = config["Proxy:Username"];
+            var pass = config["Proxy:Password"];
+
+            if (!string.IsNullOrWhiteSpace(user))
+            {
+                proxy.Credentials = new NetworkCredential(user, pass);
+            }
+
+            return new SocketsHttpHandler
+            {
+                Proxy = proxy,
+                UseProxy = true,
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            };
+        }
+
+        return new SocketsHttpHandler();
+    });
 
 builder.Services.AddHttpClient("TikTokAuth", c =>
 {

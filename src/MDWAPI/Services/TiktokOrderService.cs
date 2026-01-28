@@ -367,6 +367,7 @@ namespace MDWAPI.Services
                     .Where(x => x.ValueKind == JsonValueKind.Object)
                     .Select(ReadShopIdAsString)
                     .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!)
                     .Distinct()
                     .ToArray();
 

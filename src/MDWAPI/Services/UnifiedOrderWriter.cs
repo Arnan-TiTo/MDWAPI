@@ -134,6 +134,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         if (existed is null)
         {
             // ===== CREATE =====
+
             var h = new UnifiedOrders
             {
                 Channel = dto.Channel,
@@ -161,6 +162,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
                 TrackingNo = dto.TrackingNo,
                 WarehouseCode = dto.WarehouseCode,
                 BuyerUserId = dto.BuyerUserId,
+                BuyerUsername = dto.BuyerUsername,
                 BuyerName = dto.BuyerName,
                 BuyerPhone = dto.BuyerPhone,
                 BuyerEmail = dto.BuyerEmail,
@@ -249,6 +251,13 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             }
 
             await _db.SaveChangesAsync(ct);
+            
+            // POST-CHECK: Fix null ExternalOrderNo
+            await _db.Database.ExecuteSqlAsync($@"
+                UPDATE mdw.UnifiedOrders
+                SET ExternalOrderNo = ExternalOrderId
+                WHERE UnifiedOrderId = {h.UnifiedOrderId} AND (ExternalOrderNo IS NULL OR ExternalOrderNo = '')", ct);
+
             await tx.CommitAsync(ct);
             return h.UnifiedOrderId;
         }
@@ -258,7 +267,9 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             if (shipAddrId.HasValue) existed.ShipToAddressId = shipAddrId;
             if (billAddrId.HasValue) existed.BillToAddressId = billAddrId;
 
-            existed.ExternalOrderNo = dto.ExternalOrderNo ?? dto.ExternalOrderId ?? existed.ExternalOrderNo;
+            existed.ExternalOrderNo = string.IsNullOrWhiteSpace(dto.ExternalOrderNo) ? dto.ExternalOrderId : dto.ExternalOrderNo;
+
+            if (existed.ExternalOrderNo.Length < 5 ) existed.ExternalOrderNo = dto.ExternalOrderId;
 
             existed.OrderStatus = dto.OrderStatus;
             existed.FulfillmentStatus = dto.FulfillmentStatus;
@@ -280,6 +291,7 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             existed.TrackingNo = dto.TrackingNo;
             existed.WarehouseCode = dto.WarehouseCode;
             existed.BuyerUserId = dto.BuyerUserId;
+            existed.BuyerUsername = dto.BuyerUsername;
             existed.BuyerName = dto.BuyerName;
             existed.BuyerPhone = dto.BuyerPhone;
             existed.BuyerEmail = dto.BuyerEmail;
@@ -371,6 +383,13 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             }
 
             await _db.SaveChangesAsync(ct);
+
+            // POST-CHECK: Fix null ExternalOrderNo
+            await _db.Database.ExecuteSqlAsync($@"
+                UPDATE mdw.UnifiedOrders
+                SET ExternalOrderNo = ExternalOrderId
+                WHERE UnifiedOrderId = {existed.UnifiedOrderId} AND (ExternalOrderNo IS NULL OR ExternalOrderNo = '')", ct);
+            
             await tx.CommitAsync(ct);
             return existed.UnifiedOrderId;
         }
@@ -429,16 +448,53 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
     }
 
     // (ยังคง generic minimal สำหรับแพลตฟอร์มอื่น จนกว่าจะทำ normalizer ของมัน)
-    public Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
-        => UpsertFromRawGenericAsync(
-            channel: "TikTok",
-            shopId: shopId,
-            sellerId: sellerId,
-            externalOrderId: ExtractTiktokExternalId(rawJson),
-            rawJson: rawJson,
-            batchNo: batchNo,
-            ct: ct
-        );
+    public async Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
+    {
+        // 1. Extract ID & Hash
+        var hash = ComputeHash(rawJson);
+        // Note: ExtractTiktokExternalId may need to handle numbers if TikTok sends them. 
+        // Currently it requires String. If it fails, we might miss orders.
+        // But assuming it works or we fix ExtractTiktokExternalId logic:
+        string externalOrderId = ExtractTiktokExternalId(rawJson);
+
+        // 2. Check if identical payload exists
+        var existed = await _db.UnifiedOrders
+            .Where(u => u.Channel == "TikTok" && u.ExternalOrderId == externalOrderId)
+            .Select(u => new { u.UnifiedOrderId, u.SourcePayloadHash })
+            .FirstOrDefaultAsync(ct);
+
+        if (existed is not null &&
+            existed.SourcePayloadHash is not null &&
+            existed.SourcePayloadHash.SequenceEqual(hash))
+        {
+            return new NormalizeResult
+            {
+                Outcome = NormalizeOutcome.Unchanged,
+                UnifiedOrderId = existed.UnifiedOrderId,
+                ExternalOrderId = externalOrderId,
+                RawHash = hash
+            };
+        }
+
+        // 3. Insert RAW
+        var rawId = await InsertRawAsync("TikTok", shopId, sellerId, externalOrderId, rawJson, batchNo, ct);
+
+        // 4. Normalize
+        using var doc = JsonDocument.Parse(rawJson);
+        // Normalize using proper TikTok logic
+        var dto = TikTokNormalizer.Normalize(doc.RootElement, shopId, sellerId, rawId, rawJson, batchNo);
+
+        // 5. Upsert Unified
+        var unifiedId = await UpsertAsync(dto, ct);
+
+        return new NormalizeResult
+        {
+            Outcome = existed is null ? NormalizeOutcome.Created : NormalizeOutcome.Updated,
+            UnifiedOrderId = unifiedId,
+            ExternalOrderId = externalOrderId,
+            RawHash = hash
+        };
+    }
 
     public Task<NormalizeResult> UpsertFromLazadaRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
         => UpsertFromRawGenericAsync(
@@ -526,10 +582,11 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         using var doc = JsonDocument.Parse(rawJson);
         var r = doc.RootElement;
         string? id =
-            (r.TryGetProperty("order_id", out var a) && a.ValueKind == JsonValueKind.String) ? a.GetString() :
-            (r.TryGetProperty("orderId", out var b) && b.ValueKind == JsonValueKind.String) ? b.GetString() :
-            (r.TryGetProperty("order_number", out var c) && c.ValueKind == JsonValueKind.String) ? c.GetString() :
-            (r.TryGetProperty("orderNumber", out var d) && d.ValueKind == JsonValueKind.String) ? d.GetString() :
+            (r.TryGetProperty("id", out var z) && (z.ValueKind == JsonValueKind.String || z.ValueKind == JsonValueKind.Number)) ? z.ToString() :
+            (r.TryGetProperty("order_id", out var a) && (a.ValueKind == JsonValueKind.String || a.ValueKind == JsonValueKind.Number)) ? a.ToString() :
+            (r.TryGetProperty("orderId", out var b) && (b.ValueKind == JsonValueKind.String || b.ValueKind == JsonValueKind.Number)) ? b.ToString() :
+            (r.TryGetProperty("order_number", out var c) && (c.ValueKind == JsonValueKind.String || c.ValueKind == JsonValueKind.Number)) ? c.ToString() :
+            (r.TryGetProperty("orderNumber", out var d) && (d.ValueKind == JsonValueKind.String || d.ValueKind == JsonValueKind.Number)) ? d.ToString() :
             null;
         return id ?? throw new ArgumentException("TikTok raw: missing order id");
     }

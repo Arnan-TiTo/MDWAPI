@@ -8,7 +8,7 @@ public static class TikTokNormalizer
 {
     public static UnifiedOrderDto Normalize(JsonElement root, long? shopId, string? sellerId, long rawId, string rawJson, string? batchNo)
     {
-        var orderId = root.GetString("order_id") ?? throw new ArgumentException("order_id missing");
+        var orderId = root.GetString("order_id") ?? root.GetString("id") ?? throw new ArgumentException("order_id missing");
         var currency = root.GetString("currency");
         var statusRaw = root.GetString("order_status");
         var orderStat = StatusMapper.Order("tiktok", statusRaw);
@@ -102,7 +102,7 @@ public static class TikTokNormalizer
             ShopId = shopId,
             SellerId = sellerId,
             ExternalOrderId = orderId,
-            ExternalOrderNo = root.GetString("order_number") ?? orderId,
+            ExternalOrderNo = orderId,  // TikTok ส่งมาแค่ id เดียว ไม่มี order_number แยก
 
             OrderStatus = orderStat,
             FulfillmentStatus = root.GetString("logistics_status"),

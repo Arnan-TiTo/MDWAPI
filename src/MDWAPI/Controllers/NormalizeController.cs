@@ -3,6 +3,7 @@ using MDWAPI.Entities;
 using MDWAPI.Models;
 using MDWAPI.Repos;
 using MDWAPI.Services;
+using MDWAPI.Normalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -22,18 +23,22 @@ public class NormalizeController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly ILogger<NormalizeController> _log;
     private readonly IChannelTokenRepo _chanRepo;
+    private readonly IUnifiedOrderWriter _writer;
+    
     public NormalizeController(
         OrderNormalizeService svc, 
         IHttpClientFactory httpFactory, 
         IMemoryCache cache, 
         ILogger<NormalizeController> log,
-         IChannelTokenRepo chanRepo)
+        IChannelTokenRepo chanRepo,
+        IUnifiedOrderWriter writer)
     {
         _svc = svc;
         _httpFactory = httpFactory;
         _cache = cache;
         _log = log;
         _chanRepo = chanRepo;
+        _writer = writer;
     }
 
     // -----------------
@@ -208,7 +213,13 @@ public class NormalizeController : ControllerBase
             }, ct);
 
             await audit.CompleteAsync(transId, h => { h.Attempted = 1; h.FailedCount = 1; }, ct);
-            return StatusCode(500, new { message = "normalize failed", error = ex.Message, batchNo = trans.BatchNo });
+            return StatusCode(500, new { 
+                message = "normalize failed", 
+                error = ex.Message, 
+                innerError = ex.InnerException?.Message,
+                stack = ex.StackTrace,
+                batchNo = trans.BatchNo 
+            });
         }
     }
 
@@ -231,283 +242,291 @@ public class NormalizeController : ControllerBase
         [FromQuery] string? detailSelect = null,
         [FromQuery] int? partnersId = null)
     {
-        var ct = HttpContext.RequestAborted;
-        var client = _httpFactory.CreateClient("OrdersApi");
-        if (Request.Headers.TryGetValue("Authorization", out var auth))
-            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
-
-        var trans = new UnifiedOrderTrans
+        try
         {
-            Platform = platform,
-            ShopId = shopId,
-            SellerId = sellerId,
-            BatchNo = string.IsNullOrWhiteSpace(batchNo) ? null : batchNo,
-            Env = env,
-            Mode = "by-list",
-            TimeRangeField = timeRangeField,
-            TimeFromEpoch = timeFrom,
-            TimeToEpoch = timeTo
-        };
-        var transId = await audit.BeginAsync(trans, ct);
+            var ct = HttpContext.RequestAborted;
+            var client = _httpFactory.CreateClient("OrdersApi");
+            if (Request.Headers.TryGetValue("Authorization", out var auth))
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
 
-        var chkExp = await RefreshTokenIfNeededAsync(platform, shopId ?? 0, partnersId, env, ct);
-
-        var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
-        var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
-
-        // =========================
-        // ดึง list แบบรองรับหน้า (next_page_token) สำหรับ TikTok
-        // =========================
-        var pageToken = "";
-        var allRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var pageNo = 0;
-
-        do
-        {
-            pageNo++;
-            var pageQs = string.IsNullOrEmpty(pageToken) ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}";
-            var listUrl = $"/api/market/orders/list?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&timeRangeField={Uri.EscapeDataString(timeRangeField)}&timeFrom={timeFrom}&timeTo={timeTo}&pageSize={pageSize}{sellerIdQs}{envQs}{pageQs}";
-
-            using var listResp = await client.GetAsync(listUrl, ct);
-            var listJson = await listResp.Content.ReadAsStringAsync(ct);
-            if (!listResp.IsSuccessStatusCode)
+            var trans = new UnifiedOrderTrans
             {
-                await audit.CompleteAsync(transId, h =>
-                {
-                    h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"fetch list failed: {listJson}";
-                }, ct);
-                return StatusCode((int)listResp.StatusCode, new { message = "Fetch list failed", listUrl, err = listJson, batchNo = trans.BatchNo });
-            }
+                Platform = platform,
+                ShopId = shopId,
+                SellerId = sellerId,
+                BatchNo = string.IsNullOrWhiteSpace(batchNo) ? null : batchNo,
+                Env = env,
+                Mode = "by-list",
+                TimeRangeField = timeRangeField,
+                TimeFromEpoch = timeFrom,
+                TimeToEpoch = timeTo
+            };
+            var transId = await audit.BeginAsync(trans, ct);
 
-            using var doc = JsonDocument.Parse(listJson);
+            var chkExp = await RefreshTokenIfNeededAsync(platform, shopId ?? 0, partnersId, env, ct);
 
-            if (HasExplicitError(doc.RootElement))
+            var sellerIdQs = string.IsNullOrWhiteSpace(sellerId) ? "" : $"&sellerId={Uri.EscapeDataString(sellerId)}";
+            var envQs = string.IsNullOrWhiteSpace(env) ? "" : $"&env={Uri.EscapeDataString(env)}";
+
+            // =========================
+            // ดึง list แบบรองรับหน้า (next_page_token) สำหรับ TikTok
+            // =========================
+            var pageToken = "";
+            var allRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pageNo = 0;
+
+            do
             {
-                await audit.CompleteAsync(transId, h =>
+                pageNo++;
+                var pageQs = string.IsNullOrEmpty(pageToken) ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}";
+                var listUrl = $"/api/market/orders/list?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&timeRangeField={Uri.EscapeDataString(timeRangeField)}&timeFrom={timeFrom}&timeTo={timeTo}&pageSize={pageSize}{sellerIdQs}{envQs}{pageQs}";
+
+                using var listResp = await client.GetAsync(listUrl, ct);
+                var listJson = await listResp.Content.ReadAsStringAsync(ct);
+                if (!listResp.IsSuccessStatusCode)
                 {
-                    h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"list error payload: {listJson}";
-                }, ct);
-                return BadRequest(new { message = "list returned error", listUrl, payload = listJson, batchNo = trans.BatchNo });
-            }
-
-            // default selector สำหรับ TikTok
-            var effListSelect = listSelect;
-            if (string.IsNullOrWhiteSpace(effListSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
-                effListSelect = "data.orders";
-
-            var roots = string.IsNullOrWhiteSpace(effListSelect) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, effListSelect);
-            var pageRefs = ExtractOrderRefsInDoc(platform, roots)
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Where(s => IsLikelyOrderRef(platform, s))
-                .Distinct()
-                .ToList();
-
-            // Fallbacks: Shopee / TikTok
-            if (pageRefs.Count == 0)
-            {
-                if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
-                {
-                    foreach (var p in new[] { "response.order_list", "response.orders", "result.order_list", "result.orders", "data.order_list", "data.orders", "orders" })
+                    await audit.CompleteAsync(transId, h =>
                     {
-                        var r2 = SelectPathInDoc(doc.RootElement, p);
-                        if (r2.Count == 0) continue;
-                        pageRefs = ExtractOrderRefsInDoc(platform, r2)
-                            .Where(s => !string.IsNullOrWhiteSpace(s))
-                            .Where(s => IsLikelyOrderRef(platform, s))
-                            .Distinct()
-                            .ToList();
-                        if (pageRefs.Count > 0) break;
-                    }
-                    if (pageRefs.Count == 0)
-                    {
-                        _log.LogWarning("Shopee list parse yielded 0 refs. Sample: {body}",
-                            listJson.Length > 500 ? listJson[..500] + "..." : listJson);
-                    }
-                }
-                else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
-                {
-                    foreach (var p in new[] { "data.orders", "orders", "data" })
-                    {
-                        var r2 = SelectPathInDoc(doc.RootElement, p);
-                        if (r2.Count == 0) continue;
-                        pageRefs = ExtractOrderRefsInDoc(platform, r2)
-                            .Where(s => !string.IsNullOrWhiteSpace(s))
-                            .Distinct()
-                            .ToList();
-                        if (pageRefs.Count > 0) break;
-                    }
-                }
-            }
-
-            foreach (var r in pageRefs) allRefs.Add(r);
-
-            // next_page_token สำหรับ TikTok
-            pageToken = ExtractNextPageToken(doc.RootElement) ?? "";
-        }
-        while (!string.IsNullOrEmpty(pageToken));
-
-        var orderRefs = allRefs.ToList();
-        var totalRefs = orderRefs.Count;
-
-        int attempted = 0, created = 0, updated = 0, unchanged = 0, failed = 0;
-        var unifiedIds = new List<long>();
-
-        // =========================
-        // ดึง detail + normalize
-        // =========================
-        foreach (var orderRef in orderRefs)
-        {
-            attempted++;
-            var detailUrl = $"/api/market/orders/detail?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&orderRef={Uri.EscapeDataString(orderRef)}{sellerIdQs}{envQs}";
-
-            try
-            {
-                using var dResp = await client.GetAsync(detailUrl, ct);
-                var dJson = await dResp.Content.ReadAsStringAsync(ct);
-                if (!dResp.IsSuccessStatusCode)
-                {
-                    failed++;
-                    await audit.AddItemAsync(transId, new UnifiedOrderTransItem
-                    {
-                        OrderRef = orderRef,
-                        Result = "Failed",
-                        ErrorMessage = $"fetch detail failed: {dJson}"
+                        h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"fetch list failed: {listJson}";
                     }, ct);
-                    continue;
+                    return StatusCode((int)listResp.StatusCode, new { message = "Fetch list failed", listUrl, err = listJson, batchNo = trans.BatchNo });
                 }
 
-                List<string> natives;
-                using (var dDoc = JsonDocument.Parse(dJson))
+                using var doc = JsonDocument.Parse(listJson);
+
+                if (HasExplicitError(doc.RootElement))
                 {
-                    if (HasExplicitError(dDoc.RootElement))
+                    await audit.CompleteAsync(transId, h =>
+                    {
+                        h.TotalRefs = 0; h.Attempted = 0; h.FailedCount = 0; h.Notes = $"list error payload: {listJson}";
+                    }, ct);
+                    return BadRequest(new { message = "list returned error", listUrl, payload = listJson, batchNo = trans.BatchNo });
+                }
+
+                // default selector สำหรับ TikTok
+                var effListSelect = listSelect;
+                if (string.IsNullOrWhiteSpace(effListSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                    effListSelect = "data.orders";
+
+                var roots = string.IsNullOrWhiteSpace(effListSelect) ? new List<JsonElement> { doc.RootElement } : SelectPathInDoc(doc.RootElement, effListSelect);
+                var pageRefs = ExtractOrderRefsInDoc(platform, roots)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Where(s => IsLikelyOrderRef(platform, s))
+                    .Distinct()
+                    .ToList();
+
+                // Fallbacks: Shopee / TikTok
+                if (pageRefs.Count == 0)
+                {
+                    if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (var p in new[] { "response.order_list", "response.orders", "result.order_list", "result.orders", "data.order_list", "data.orders", "orders" })
+                        {
+                            var r2 = SelectPathInDoc(doc.RootElement, p);
+                            if (r2.Count == 0) continue;
+                            pageRefs = ExtractOrderRefsInDoc(platform, r2)
+                                .Where(s => !string.IsNullOrWhiteSpace(s))
+                                .Where(s => IsLikelyOrderRef(platform, s))
+                                .Distinct()
+                                .ToList();
+                            if (pageRefs.Count > 0) break;
+                        }
+                        if (pageRefs.Count == 0)
+                        {
+                            _log.LogWarning("Shopee list parse yielded 0 refs. Sample: {body}",
+                                listJson.Length > 500 ? listJson[..500] + "..." : listJson);
+                        }
+                    }
+                    else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                    {
+                        foreach (var p in new[] { "data.orders", "orders", "data" })
+                        {
+                            var r2 = SelectPathInDoc(doc.RootElement, p);
+                            if (r2.Count == 0) continue;
+                            pageRefs = ExtractOrderRefsInDoc(platform, r2)
+                                .Where(s => !string.IsNullOrWhiteSpace(s))
+                                .Distinct()
+                                .ToList();
+                            if (pageRefs.Count > 0) break;
+                        }
+                    }
+                }
+
+                foreach (var r in pageRefs) allRefs.Add(r);
+
+                // next_page_token สำหรับ TikTok
+                pageToken = ExtractNextPageToken(doc.RootElement) ?? "";
+            }
+            while (!string.IsNullOrEmpty(pageToken));
+
+            var orderRefs = allRefs.ToList();
+            var totalRefs = orderRefs.Count;
+
+            int attempted = 0, created = 0, updated = 0, unchanged = 0, failed = 0;
+            var unifiedIds = new List<long>();
+
+            // =========================
+            // ดึง detail + normalize
+            // =========================
+            foreach (var orderRef in orderRefs)
+            {
+                attempted++;
+                var detailUrl = $"/api/market/orders/detail?platform={Uri.EscapeDataString(platform)}&shopId={shopId}&orderRef={Uri.EscapeDataString(orderRef)}{sellerIdQs}{envQs}";
+
+                try
+                {
+                    using var dResp = await client.GetAsync(detailUrl, ct);
+                    var dJson = await dResp.Content.ReadAsStringAsync(ct);
+                    if (!dResp.IsSuccessStatusCode)
                     {
                         failed++;
                         await audit.AddItemAsync(transId, new UnifiedOrderTransItem
                         {
                             OrderRef = orderRef,
                             Result = "Failed",
-                            ErrorMessage = $"detail error payload: {dJson}"
+                            ErrorMessage = $"fetch detail failed: {dJson}"
                         }, ct);
                         continue;
                     }
 
-                    // default selector สำหรับ TikTok
-                    var effDetailSelect = detailSelect;
-                    if (string.IsNullOrWhiteSpace(effDetailSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
-                        effDetailSelect = "data.orders";
-
-                    var dRoots = string.IsNullOrWhiteSpace(effDetailSelect) ? new List<JsonElement> { dDoc.RootElement } : SelectPathInDoc(dDoc.RootElement, effDetailSelect);
-                    natives = ExtractNativeOrdersInDoc(platform, dRoots);
-
-                    // Fallbacks
-                    if (natives.Count == 0)
+                    List<string> natives;
+                    using (var dDoc = JsonDocument.Parse(dJson))
                     {
-                        if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+                        if (HasExplicitError(dDoc.RootElement))
                         {
-                            foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                            failed++;
+                            await audit.AddItemAsync(transId, new UnifiedOrderTransItem
                             {
-                                var gs = SelectPathInDoc(dDoc.RootElement, g);
-                                if (gs.Count == 0) continue;
-                                natives = ExtractNativeOrdersInDoc(platform, gs);
-                                if (natives.Count > 0) break;
-                            }
+                                OrderRef = orderRef,
+                                Result = "Failed",
+                                ErrorMessage = $"detail error payload: {dJson}"
+                            }, ct);
+                            continue;
                         }
-                        else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+
+                        // default selector สำหรับ TikTok
+                        var effDetailSelect = detailSelect;
+                        if (string.IsNullOrWhiteSpace(effDetailSelect) && platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                            effDetailSelect = "data.orders";
+
+                        var dRoots = string.IsNullOrWhiteSpace(effDetailSelect) ? new List<JsonElement> { dDoc.RootElement } : SelectPathInDoc(dDoc.RootElement, effDetailSelect);
+                        natives = ExtractNativeOrdersInDoc(platform, dRoots);
+
+                        // Fallbacks
+                        if (natives.Count == 0)
                         {
-                            foreach (var g in new[] { "data.orders.0", "data.orders", "orders", "data" })
+                            if (platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
                             {
-                                var gs = SelectPathInDoc(dDoc.RootElement, g);
-                                if (gs.Count == 0) continue;
-                                natives = ExtractNativeOrdersInDoc(platform, gs);
-                                if (natives.Count > 0) break;
+                                foreach (var g in new[] { "response.order_list.0", "response.orders.0", "result.order_list.0", "data.order.0", "data.order", "response", "result", "data" })
+                                {
+                                    var gs = SelectPathInDoc(dDoc.RootElement, g);
+                                    if (gs.Count == 0) continue;
+                                    natives = ExtractNativeOrdersInDoc(platform, gs);
+                                    if (natives.Count > 0) break;
+                                }
+                            }
+                            else if (platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase))
+                            {
+                                foreach (var g in new[] { "data.orders.0", "data.orders", "orders", "data" })
+                                {
+                                    var gs = SelectPathInDoc(dDoc.RootElement, g);
+                                    if (gs.Count == 0) continue;
+                                    natives = ExtractNativeOrdersInDoc(platform, gs);
+                                    if (natives.Count > 0) break;
+                                }
                             }
                         }
                     }
-                }
 
-                if (natives.Count == 0)
+                    if (natives.Count == 0)
+                    {
+                        failed++;
+                        await audit.AddItemAsync(transId, new UnifiedOrderTransItem
+                        {
+                            OrderRef = orderRef,
+                            Result = "Failed",
+                            ErrorMessage = "no native order object in detail"
+                        }, ct);
+                        continue;
+                    }
+
+                    var raw = natives[0];
+                    var extId = TryGetExternalId(platform, raw);
+                    if (!string.IsNullOrWhiteSpace(extId) && !extId.Equals(orderRef, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await audit.AddItemAsync(transId, new UnifiedOrderTransItem
+                        {
+                            OrderRef = orderRef,
+                            ExternalOrderId = extId,
+                            Result = "Skipped",
+                            ErrorMessage = "detail external id mismatch"
+                        }, ct);
+                        continue;
+                    }
+
+                    var r = platform.ToLowerInvariant() switch
+                    {
+                        "shopee" => await _svc.NormalizeShopeeWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
+                        "tiktok" => await _svc.NormalizeTiktokWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
+                        "lazada" => await _svc.NormalizeLazadaWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
+                        _ => throw new ArgumentException("Unsupported platform")
+                    };
+
+                    await audit.AddItemAsync(transId, new UnifiedOrderTransItem
+                    {
+                        OrderRef = orderRef,
+                        ExternalOrderId = r.ExternalOrderId,
+                        RawHash = r.RawHash,
+                        UnifiedOrderId = r.UnifiedOrderId,
+                        Result = r.Outcome.ToString()
+                    }, ct);
+
+                    unifiedIds.Add(r.UnifiedOrderId);
+                    if (r.Outcome == NormalizeOutcome.Created) created++;
+                    else if (r.Outcome == NormalizeOutcome.Updated) updated++;
+                    else unchanged++;
+                }
+                catch (Exception ex)
                 {
                     failed++;
                     await audit.AddItemAsync(transId, new UnifiedOrderTransItem
                     {
                         OrderRef = orderRef,
                         Result = "Failed",
-                        ErrorMessage = "no native order object in detail"
+                        ErrorMessage = $"{ex.Message} | {ex.InnerException?.Message}"
                     }, ct);
-                    continue;
                 }
-
-                var raw = natives[0];
-                var extId = TryGetExternalId(platform, raw);
-                if (!string.IsNullOrWhiteSpace(extId) && !extId.Equals(orderRef, StringComparison.OrdinalIgnoreCase))
-                {
-                    await audit.AddItemAsync(transId, new UnifiedOrderTransItem
-                    {
-                        OrderRef = orderRef,
-                        ExternalOrderId = extId,
-                        Result = "Skipped",
-                        ErrorMessage = "detail external id mismatch"
-                    }, ct);
-                    continue;
-                }
-
-                var r = platform.ToLowerInvariant() switch
-                {
-                    "shopee" => await _svc.NormalizeShopeeWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
-                    "tiktok" => await _svc.NormalizeTiktokWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
-                    "lazada" => await _svc.NormalizeLazadaWithResultAsync(shopId, sellerId, raw, trans.BatchNo, ct),
-                    _ => throw new ArgumentException("Unsupported platform")
-                };
-
-                await audit.AddItemAsync(transId, new UnifiedOrderTransItem
-                {
-                    OrderRef = orderRef,
-                    ExternalOrderId = r.ExternalOrderId,
-                    RawHash = r.RawHash,
-                    UnifiedOrderId = r.UnifiedOrderId,
-                    Result = r.Outcome.ToString()
-                }, ct);
-
-                unifiedIds.Add(r.UnifiedOrderId);
-                if (r.Outcome == NormalizeOutcome.Created) created++;
-                else if (r.Outcome == NormalizeOutcome.Updated) updated++;
-                else unchanged++;
             }
-            catch (Exception ex)
+
+            await audit.CompleteAsync(transId, h =>
             {
-                failed++;
-                await audit.AddItemAsync(transId, new UnifiedOrderTransItem
-                {
-                    OrderRef = orderRef,
-                    Result = "Failed",
-                    ErrorMessage = $"{ex.Message} | {ex.InnerException?.Message}"
-                }, ct);
-            }
+                h.TotalRefs = totalRefs; h.Attempted = attempted; h.CreatedCount = created;
+                h.UpdatedCount = updated; h.UnchangedCount = unchanged; h.FailedCount = failed;
+                h.Notes = $"RangeField={timeRangeField}, From={timeFrom}, To={timeTo}";
+            }, ct);
+
+            return Ok(new
+            {
+                platform,
+                shopId,
+                timeRangeField,
+                timeFrom,
+                timeTo,
+                batchNo = trans.BatchNo,
+                totalRefs,
+                inserted = created + updated + unchanged,
+                created,
+                updated,
+                unchanged,
+                failed,
+                unifiedOrderIds = unifiedIds
+            });
         }
-
-        await audit.CompleteAsync(transId, h =>
+        catch (Exception ex)
         {
-            h.TotalRefs = totalRefs; h.Attempted = attempted; h.CreatedCount = created;
-            h.UpdatedCount = updated; h.UnchangedCount = unchanged; h.FailedCount = failed;
-            h.Notes = $"RangeField={timeRangeField}, From={timeFrom}, To={timeTo}";
-        }, ct);
-
-        return Ok(new
-        {
-            platform,
-            shopId,
-            timeRangeField,
-            timeFrom,
-            timeTo,
-            batchNo = trans.BatchNo,
-            totalRefs,
-            inserted = created + updated + unchanged,
-            created,
-            updated,
-            unchanged,
-            failed,
-            unifiedOrderIds = unifiedIds
-        });
+            _log.LogError(ex, "NormalizeByList failed");
+            return StatusCode(500, new { message = "Critical failure in NormalizeByList", error = ex.Message, stack = ex.StackTrace });
+        }
     }
 
     // ========================
@@ -531,7 +550,7 @@ public class NormalizeController : ControllerBase
         // 1) เช็คอายุ token จากฐาน: < UTC+10 นาที => "refresh", otherwise "use token"
         var decision = await _chanRepo.GetCheckExpireAsync(
             channel: platform,
-            environment: env,                // ถ้าอยากไม่ filter env ให้ส่ง null เข้ามา
+            environment: env ?? "prod",                // ถ้าอยากไม่ filter env ให้ส่ง null เข้ามา
             partnerId: partnersId,
             appKey: null,
             accountIdBig: null,
@@ -776,5 +795,116 @@ public class NormalizeController : ControllerBase
         }
         catch { /* ignore */ }
         return null;
+    }
+
+    // -----------------
+    // TEST ENDPOINT: Direct JSON normalization
+    // -----------------
+    [HttpPost("test-shopee")]
+    public async Task<IActionResult> TestShopeeNormalize(
+        [FromBody] JsonElement payload,
+        [FromQuery] long? shopId = null,
+        [FromQuery] string? sellerId = null,
+        [FromQuery] string? batchNo = "TEST")
+    {
+        try
+        {
+            var ct = HttpContext.RequestAborted;
+            var rawJson = payload.GetRawText();
+            
+            // Normalize using ShopeeNormalizer
+            var dto = ShopeeNormalizer.Normalize(payload, shopId, sellerId, 0, rawJson, batchNo);
+            
+            // Try to upsert to database
+            var result = await _writer.UpsertFromShopeeRawAsync(shopId, sellerId, rawJson, batchNo, ct);
+            
+            return Ok(new
+            {
+                success = true,
+                message = "Normalization successful",
+                outcome = result.Outcome.ToString(),
+                unifiedOrderId = result.UnifiedOrderId,
+                externalOrderId = result.ExternalOrderId,
+                normalizedData = new
+                {
+                    channel = dto.Channel,
+                    orderSn = dto.ExternalOrderId,
+                    orderStatus = dto.OrderStatus,
+                    buyerUserId = dto.BuyerUserId,
+                    buyerUsername = dto.BuyerUsername,
+                    buyerName = dto.BuyerName,
+                    totalAmount = dto.TotalAmount,
+                    currency = dto.Currency,
+                    itemCount = dto.Items?.Count ?? 0,
+                    paymentMethod = dto.PaymentMethod,
+                    shippingProvider = dto.ShipmentProvider
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                success = false,
+                error = ex.Message,
+                innerError = ex.InnerException?.Message,
+                stack = ex.StackTrace,
+                type = ex.GetType().FullName
+            });
+        }
+    }
+
+    [HttpPost("test-tiktok")]
+    public async Task<IActionResult> TestTikTokNormalize(
+        [FromBody] JsonElement payload,
+        [FromQuery] long? shopId = null,
+        [FromQuery] string? sellerId = null,
+        [FromQuery] string? batchNo = "TEST")
+    {
+        try
+        {
+            var ct = HttpContext.RequestAborted;
+            var rawJson = payload.GetRawText();
+            
+            // Normalize using TikTokNormalizer
+            var dto = TikTokNormalizer.Normalize(payload, shopId, sellerId, 0, rawJson, batchNo);
+            
+            // Try to upsert to database
+            var result = await _writer.UpsertFromTiktokRawAsync(shopId, sellerId, rawJson, batchNo, ct);
+            
+            return Ok(new
+            {
+                success = true,
+                message = "TikTok Normalization successful",
+                outcome = result.Outcome.ToString(),
+                unifiedOrderId = result.UnifiedOrderId,
+                externalOrderId = result.ExternalOrderId,
+                normalizedData = new
+                {
+                    channel = dto.Channel,
+                    orderId = dto.ExternalOrderId,
+                    orderStatus = dto.OrderStatus,
+                    buyerUserId = dto.BuyerUserId,
+                    buyerEmail = dto.BuyerEmail,
+                    buyerName = dto.BuyerName,
+                    totalAmount = dto.TotalAmount,
+                    currency = dto.Currency,
+                    itemCount = dto.Items?.Count ?? 0,
+                    paymentMethod = dto.PaymentMethod,
+                    shippingProvider = dto.ShipmentProvider
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                success = false,
+                error = ex.Message,
+                innerError = ex.InnerException?.Message,
+                stack = ex.StackTrace,
+                type = ex.GetType().FullName
+            });
+        }
     }
 }

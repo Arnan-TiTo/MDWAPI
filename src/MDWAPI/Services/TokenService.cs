@@ -17,7 +17,7 @@ public class TokenService
             throw new InvalidOperationException("Invalid credentials");
 
         var token = GenerateToken();
-        var now = DateTime.UtcNow;
+        var now = DateTime.Now;
         var tok = new UserToken
         {
             UserId = user.Id,
@@ -35,7 +35,7 @@ public class TokenService
         var t = await _db.UserTokens.SingleOrDefaultAsync(x => x.Token == token);
         if (t != null)
         {
-            t.RevokedAt = DateTime.UtcNow;
+            t.RevokedAt = DateTime.Now;
             await _db.SaveChangesAsync();
         }
     }

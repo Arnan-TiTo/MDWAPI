@@ -136,7 +136,8 @@ public static class ShopeeNormalizer
 
         // ===== Buyer =====
         var buyerUserId = root.GetLong("buyer_user_id")?.ToString() ?? root.GetString("buyer_userid");
-        var buyerName = shipTo?.Name ?? root.GetString("buyer_username"); // ให้ชื่อผู้รับเป็นหลัก
+        var buyerUsername = root.GetString("buyer_username");
+        var buyerName = shipTo?.Name; // ใช้ชื่อผู้รับจาก address
         var buyerPhone = shipTo?.Phone;
 
         // ===== Notes =====
@@ -178,6 +179,7 @@ public static class ShopeeNormalizer
             TrackingNo = shipments.First().TrackingNo,
 
             BuyerUserId = buyerUserId,
+            BuyerUsername = buyerUsername,
             BuyerName = buyerName,
             BuyerPhone = buyerPhone,
 

@@ -6,7 +6,7 @@ public record UnifiedOrderDto
     public long? ShopId { get; init; }
     public string? SellerId { get; init; }
     public string ExternalOrderId { get; init; } = default!;
-    public string? ExternalOrderNo { get; init; }
+    public string? ExternalOrderNo { get; init; } = null!;
 
     public string? OrderStatus { get; init; }
     public string? FulfillmentStatus { get; init; }
@@ -31,6 +31,7 @@ public record UnifiedOrderDto
     public string? WarehouseCode { get; init; }
 
     public string? BuyerUserId { get; init; }
+    public string? BuyerUsername { get; init; }
     public string? BuyerName { get; init; }
     public string? BuyerPhone { get; init; }
     public string? BuyerEmail { get; init; }
