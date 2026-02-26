@@ -8,6 +8,7 @@ public class LazadaLogisticsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly IConfiguration _cfg;
     private readonly ChannelTokenResolver _resolver;
+    private readonly LazadaOrderService _orderService;
     private readonly ILogger<LazadaLogisticsService> _log;
 
     // ตัวสร้างบริการ (inject HttpClientFactory, Config, Resolver, Logger)
@@ -15,12 +16,58 @@ public class LazadaLogisticsService
         IHttpClientFactory httpFactory,
         IConfiguration cfg,
         ChannelTokenResolver resolver,
+        LazadaOrderService orderService,
         ILogger<LazadaLogisticsService> log)
     {
         _httpFactory = httpFactory;
         _cfg = cfg;
         _resolver = resolver;
+        _orderService = orderService;
         _log = log;
+    }
+
+    public async Task<byte[]> DownloadLabelAsync(long shopId, MDWAPI.Models.LabelDownloadRequest req, CancellationToken ct)
+    {
+        var orderIds = new List<string>();
+
+        if (!string.IsNullOrEmpty(req.OrderSn))
+        {
+            orderIds.Add(req.OrderSn);
+        }
+        else if (req.FromDate.HasValue && req.ToDate.HasValue)
+        {
+            // Fetch orders by date range
+            var fromIso = req.FromDate.Value.ToString("yyyy-MM-ddTHH:mm:ssK");
+            var toIso = req.ToDate.Value.ToString("yyyy-MM-ddTHH:mm:ssK");
+
+            var listJson = await _orderService.GetOrderListRawAsync(shopId, fromIso, toIso, ct: ct);
+            using var doc = JsonDocument.Parse(listJson);
+            if (doc.RootElement.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("orders", out var orders))
+            {
+                foreach (var order in orders.EnumerateArray())
+                {
+                    if (order.TryGetProperty("order_id", out var id))
+                    {
+                        orderIds.Add(id.GetRawText().Trim('"'));
+                    }
+                }
+            }
+        }
+
+        if (orderIds.Count == 0)
+        {
+            throw new ArgumentException("No orders found for the given criteria.");
+        }
+
+        // Lazada print waybill takes order_ids as a comma-separated string or multiple values
+        // Usually it's in the query parameters for Lazada GET waybill
+        var parameters = new Dictionary<string, string?>
+        {
+            ["order_ids"] = $"[{string.Join(",", orderIds)}]"
+        };
+
+        return await PrintWaybillAsync(shopId.ToString(), parameters, ct);
     }
 
     // อ่านค่า environment จาก appsettings ("prod" by default)
@@ -47,7 +94,7 @@ public class LazadaLogisticsService
 
         var host = _resolver.HostFor("lazada", environment);
 
-        var http = _httpFactory.CreateClient("Shopee");
+        var http = _httpFactory.CreateClient("Lazada");
         http.BaseAddress = new Uri(host);
         http.Timeout = TimeSpan.FromSeconds(30);
 

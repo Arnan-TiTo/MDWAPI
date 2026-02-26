@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using MDWAPI.Common;
+using MDWAPI.Models;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -107,26 +108,32 @@ public class MarketplaceLogisticsController : ControllerBase
     public async Task<IActionResult> DownloadLabel(
         [FromQuery] Platform platform,
         [FromQuery] long shopId,
-        [FromBody] JsonElement body,
+        [FromBody] LabelDownloadRequest req,
         CancellationToken ct)
     {
         switch (platform)
         {
             case Platform.Shopee:
                 {
-                    var bytes = await _shopee.DownloadShippingDocumentAsync(shopId, body, ct);
+                    var bytes = await _shopee.DownloadLabelAsync(shopId, req, ct);
                     return File(bytes, "application/pdf", "shopee-label.pdf");
                 }
             case Platform.Lazada:
                 {
-                    var dict = JsonSerializer.Deserialize<Dictionary<string, string?>>(body.GetRawText())
-                               ?? new Dictionary<string, string?>();
-                    var bytes = await _lazada.PrintWaybillAsync(sellerId: shopId.ToString(), parameters: dict, ct: ct);
+                    // For Lazada, we still use the legacy way if no OrderSn/Dates provided
+                    if (string.IsNullOrEmpty(req.OrderSn) && !req.FromDate.HasValue && req.RawBody.HasValue)
+                    {
+                        var dict = JsonSerializer.Deserialize<Dictionary<string, string?>>(req.RawBody.Value.GetRawText())
+                                   ?? new Dictionary<string, string?>();
+                        var legacyBytes = await _lazada.PrintWaybillAsync(sellerId: shopId.ToString(), parameters: dict, ct: ct);
+                        return File(legacyBytes, "application/pdf", "lazada-waybill.pdf");
+                    }
+                    var bytes = await _lazada.DownloadLabelAsync(shopId, req, ct);
                     return File(bytes, "application/pdf", "lazada-waybill.pdf");
                 }
             case Platform.TikTok:
                 {
-                    var bytes = await _tiktok.DownloadShippingDocumentAsync(null, shopId.ToString(), body, ct);
+                    var bytes = await _tiktok.DownloadLabelAsync(shopId, req, ct);
                     return File(bytes, "application/pdf", "tiktok-label.pdf");
                 }
             default:

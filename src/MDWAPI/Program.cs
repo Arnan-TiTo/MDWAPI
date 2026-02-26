@@ -65,6 +65,10 @@ builder.Services.AddScoped<ShopeeTokenRefreshService>();
 builder.Services.AddScoped<IShopeeOrderIngestRepo, ShopeeOrderIngestRepo>();
 builder.Services.AddScoped<ShopeeOrderIngestService>();
 
+builder.Services.AddScoped<ShopeeLogisticsService>();
+builder.Services.AddScoped<LazadaLogisticsService>();
+builder.Services.AddScoped<TiktokLogisticsService>();
+
 // UnifiedOrder normalize layer
 builder.Services.AddScoped<IUnifiedOrderWriter, UnifiedOrderWriter>();
 builder.Services.AddScoped<OrderNormalizeService>();

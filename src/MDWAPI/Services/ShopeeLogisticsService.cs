@@ -8,19 +8,65 @@ public class ShopeeLogisticsService
     private readonly IHttpClientFactory _httpFactory;
     private readonly IConfiguration _cfg;
     private readonly ChannelTokenResolver _resolver;
+    private readonly ShopeeOrderService _orderService;
     private readonly ILogger<ShopeeLogisticsService> _log;
 
     public ShopeeLogisticsService(
         IHttpClientFactory httpFactory,
         IConfiguration cfg,
         ChannelTokenResolver resolver,
+        ShopeeOrderService orderService,
         ILogger<ShopeeLogisticsService> log)
     {
         _httpFactory = httpFactory;
         _cfg = cfg;
         _resolver = resolver;
+        _orderService = orderService;
         _log = log;
     }
+
+    public async Task<byte[]> DownloadLabelAsync(long shopId, MDWAPI.Models.LabelDownloadRequest req, CancellationToken ct)
+    {
+        var orderSns = new List<string>();
+
+        if (!string.IsNullOrEmpty(req.OrderSn))
+        {
+            orderSns.Add(req.OrderSn);
+        }
+        else if (req.FromDate.HasValue && req.ToDate.HasValue)
+        {
+            // Fetch orders by date range
+            var timeFrom = new DateTimeOffset(req.FromDate.Value).ToUnixTimeSeconds();
+            var timeTo = new DateTimeOffset(req.ToDate.Value).ToUnixTimeSeconds();
+
+            var listJson = await _orderService.GetOrderListRawAsync(shopId, "create_time", timeFrom, timeTo, 50, null, null, ct);
+            using var doc = JsonDocument.Parse(listJson);
+            if (doc.RootElement.TryGetProperty("response", out var response) &&
+                response.TryGetProperty("order_list", out var orderList))
+            {
+                foreach (var order in orderList.EnumerateArray())
+                {
+                    if (order.TryGetProperty("order_sn", out var sn))
+                    {
+                        orderSns.Add(sn.GetString()!);
+                    }
+                }
+            }
+        }
+
+        if (orderSns.Count == 0)
+        {
+            if (req.RawBody.HasValue)
+                return await DownloadShippingDocumentAsync(shopId, req.RawBody.Value, ct);
+            
+            throw new ArgumentException("No orders found for the given criteria.");
+        }
+
+        // For Shopee, we can request label for multiple order_sn in one go
+        var body = new { order_list = orderSns.Select(sn => new { order_sn = sn }).ToList() };
+        return await DownloadShippingDocumentAsync(shopId, body, ct);
+    }
+
 
     private (int partnerId, string partnerKey, string environment) GetPartner()
     {
