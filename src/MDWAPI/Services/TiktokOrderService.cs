@@ -459,5 +459,99 @@ namespace MDWAPI.Services
             var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(toSign));
             return Convert.ToHexString(hash).ToLowerInvariant();
         }
+
+        // ====== Order Actions ======
+
+        /// <summary>
+        /// POST /order/202309/orders/cancel
+        /// ยกเลิก order (ก่อนจัดส่ง)
+        /// </summary>
+        public async Task<string> CancelOrderAsync(
+            long shopId,
+            string orderId,
+            string cancelReason,
+            string? shopCipher = null,
+            CancellationToken ct = default)
+        {
+            const string channel = "tiktok";
+            const string defaultEnv = "prod";
+            var path = MDWAPI.Helpers.TiktokApiPaths.OrderCancel202309;
+
+            var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
+                channel: channel,
+                environment: defaultEnv,
+                partnerId: null,
+                appKey: null,
+                accountIdBig: null,
+                accountIdStr: shopId.ToString(),
+                ct: ct);
+
+            if (string.IsNullOrWhiteSpace(accessToken))
+                throw new InvalidOperationException("TikTok accessToken missing for this shop.");
+            if (string.IsNullOrWhiteSpace(appKey))
+                throw new InvalidOperationException("TikTok appKey missing for this shop.");
+
+            var appSecret = await _resolver.ResolveAppSecretAsync(
+                channel: channel,
+                environment: env,
+                partnersId: 0,
+                appKey: appKey!,
+                accountIdStr: shopId.ToString(),
+                ct: ct);
+
+            if (string.IsNullOrWhiteSpace(shopCipher))
+            {
+                shopCipher = await EnsureShopCipherAsync(
+                    shopId: shopId,
+                    env: env,
+                    appKey: appKey!,
+                    appSecret: appSecret,
+                    accessToken: accessToken,
+                    ct: ct);
+            }
+
+            var host = _resolver.HostFor(channel, env);
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["app_key"] = appKey,
+                ["sign_method"] = "sha256",
+                ["timestamp"] = ts,
+                ["shop_cipher"] = shopCipher,
+                ["access_token"] = accessToken
+            };
+
+            var bodyObj = new
+            {
+                order_id = orderId,
+                cancel_reason = cancelReason
+            };
+
+            var bodyJson = JsonSerializer.Serialize(bodyObj);
+            var bodyBytes = Encoding.UTF8.GetBytes(bodyJson);
+
+            q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyBytes);
+
+            var url = QueryHelpers.AddQueryString($"{host}{path}", q);
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(bodyJson, Encoding.UTF8, "application/json")
+            };
+            req.Headers.TryAddWithoutValidation("x-tts-access-token", accessToken);
+            req.Headers.Accept.ParseAdd("application/json");
+
+            _log.LogInformation("TikTok POST cancel {Url} | body={Body}", url, bodyJson);
+
+            using var http = _http.CreateClient("TikTok");
+            using var resp = await http.SendAsync(req, ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"TikTok cancel order failed: {(int)resp.StatusCode} | {text}");
+
+            return text;
+        }
     }
 }

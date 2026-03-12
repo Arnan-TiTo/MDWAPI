@@ -1,4 +1,4 @@
-﻿using MDWAPI.Entities;
+using MDWAPI.Entities;
 using MDWAPI.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<UnifiedOrderShipments> UnifiedOrderShipments => Set<UnifiedOrderShipments>();
     public DbSet<UnifiedOrderAddresses> UnifiedOrderAddresses => Set<UnifiedOrderAddresses>();
     public DbSet<VUnifiedOrder> VUnifiedOrders => Set<VUnifiedOrder>();
+    public DbSet<UnifiedOrderLabel> UnifiedOrderLabels => Set<UnifiedOrderLabel>();
 
     // --views ADW-- 
     public DbSet<VwOrderMerged> VwOrderMerged { get; set; } = default!;
@@ -181,6 +182,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<UnifiedOrders>(e =>
         {
             e.ToTable("UnifiedOrders", "mdw", tb => tb.HasTrigger("TR_UnifiedOrders_Update"));
+        });
+
+        modelBuilder.Entity<UnifiedOrderLabel>(e =>
+        {
+            e.ToTable("UnifiedOrderLabels", "mdw");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.Channel, x.OrderExternalNo });
+            e.Property(x => x.CreatedDate).HasDefaultValueSql("SYSUTCDATETIME()");
         });
 
         modelBuilder.Entity<VUnifiedOrder>(e =>

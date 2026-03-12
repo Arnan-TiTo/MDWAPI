@@ -206,4 +206,136 @@ public class ShopeeOrderService
         var http = _http.CreateClient(ClientName);
         return (url, http);
     }
+
+    private async Task<(string url, HttpClient http)> BuildSignedPostAsync(
+        string apiPath,
+        long shopId,
+        Dictionary<string, string?>? extraQuery,
+        CancellationToken ct)
+    {
+        var (partnersId, accountIdBig, _) = await _shopRepo.GetShopBindingAsync(shopId, ct);
+        if (accountIdBig is null || accountIdBig.Value != shopId)
+            _log.LogDebug("Shop binding accountIdBig mismatch. input={Input} bound={Bound}", shopId, accountIdBig);
+
+        var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
+                  ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
+        if (cfg.PartnerId is null || string.IsNullOrWhiteSpace(cfg.PartnerKey))
+            throw new InvalidOperationException("Shopee PartnerId/PartnerKey is required");
+
+        var (accessToken, tokenEnv, _, _) = await _resolver.GetAccessTokenAsync(
+            channel: "shopee",
+            environment: cfg.Environment ?? "prod",
+            partnerId: cfg.PartnerId,
+            appKey: null,
+            accountIdBig: shopId,
+            accountIdStr: null,
+            ct: ct);
+
+        var host = _resolver.HostFor("shopee", tokenEnv);
+        var ts = UnixTime.NowSeconds();
+
+        var sign = ShopeeSign.BuildShopSign(
+            partnerId: cfg.PartnerId.Value,
+            partnerKey: cfg.PartnerKey!,
+            apiPath: apiPath,
+            timestamp: ts,
+            accessToken: accessToken,
+            shopId: shopId,
+            mode: ShopeeKeyMode.RawString
+        );
+
+        var baseQuery = new Dictionary<string, string?>
+        {
+            ["partner_id"] = cfg.PartnerId.Value.ToString(),
+            ["timestamp"] = ts.ToString(),
+            ["sign"] = sign,
+            ["access_token"] = accessToken,
+            ["shop_id"] = shopId.ToString()
+        };
+
+        if (extraQuery is not null)
+            foreach (var kv in extraQuery) baseQuery[kv.Key] = kv.Value;
+
+        var url = QueryHelpers.AddQueryString($"{host}{apiPath}", baseQuery);
+
+        var http = _http.CreateClient(ClientName);
+        return (url, http);
+    }
+
+    // ====== Order Actions (POST) ======
+
+    /// <summary>
+    /// POST /api/v2/order/cancel_order
+    /// ยกเลิก order ก่อนจัดส่ง
+    /// </summary>
+    public async Task<string> CancelOrderAsync(long shopId, string orderSn, string cancelReason, object? itemList = null, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedPostAsync(
+            apiPath: ShopeeApiPaths.OrderCancelOrder,
+            shopId: shopId,
+            extraQuery: null,
+            ct: ct);
+
+        var body = itemList is not null
+            ? new { order_sn = orderSn, cancel_reason = cancelReason, item_list = itemList }
+            : (object)new { order_sn = orderSn, cancel_reason = cancelReason };
+
+        var res = await http.PostJsonAsync(url, body, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee cancel_order failed: {Status} {Body}", res.StatusCode, text);
+            throw new HttpRequestException($"Shopee cancel_order failed: {(int)res.StatusCode}");
+        }
+        return text;
+    }
+
+    /// <summary>
+    /// POST /api/v2/order/handle_buyer_cancellation
+    /// ACCEPT or REJECT buyer cancellation request
+    /// </summary>
+    public async Task<string> HandleBuyerCancellationAsync(long shopId, string orderSn, string operation, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedPostAsync(
+            apiPath: ShopeeApiPaths.OrderHandleBuyerCancellation,
+            shopId: shopId,
+            extraQuery: null,
+            ct: ct);
+
+        var body = new { order_sn = orderSn, operation };
+
+        var res = await http.PostJsonAsync(url, body, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee handle_buyer_cancellation failed: {Status} {Body}", res.StatusCode, text);
+            throw new HttpRequestException($"Shopee handle_buyer_cancellation failed: {(int)res.StatusCode}");
+        }
+        return text;
+    }
+
+    /// <summary>
+    /// POST /api/v2/order/set_note
+    /// ตั้ง note ให้ order
+    /// </summary>
+    public async Task<string> SetNoteAsync(long shopId, string orderSn, string note, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedPostAsync(
+            apiPath: ShopeeApiPaths.OrderSetNote,
+            shopId: shopId,
+            extraQuery: null,
+            ct: ct);
+
+        var body = new { order_sn = orderSn, note };
+
+        var res = await http.PostJsonAsync(url, body, ct);
+        var text = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee set_note failed: {Status} {Body}", res.StatusCode, text);
+            throw new HttpRequestException($"Shopee set_note failed: {(int)res.StatusCode}");
+        }
+        return text;
+    }
 }
+

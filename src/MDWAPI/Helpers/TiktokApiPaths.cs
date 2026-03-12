@@ -12,5 +12,6 @@
         // Orders (versioned 202309)
         public const string OrdersSearch202309 = "/order/202309/orders/search";
         public const string OrderDetail202309 = "/order/202309/orders/detail";
+        public const string OrderCancel202309 = "/order/202309/orders/cancel";
     }
 }

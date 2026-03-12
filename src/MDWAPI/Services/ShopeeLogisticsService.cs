@@ -1,4 +1,5 @@
-﻿using MDWAPI.Helpers;
+using MDWAPI.Helpers;
+using MDWAPI.Repos;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Text.Json;
 
@@ -7,20 +8,23 @@ namespace MDWAPI.Services;
 public class ShopeeLogisticsService
 {
     private readonly IHttpClientFactory _httpFactory;
-    private readonly IConfiguration _cfg;
+    private readonly IShopRepo _shopRepo;
+    private readonly IPartnerRepo _partnerRepo;
     private readonly ChannelTokenResolver _resolver;
     private readonly ShopeeOrderService _orderService;
     private readonly ILogger<ShopeeLogisticsService> _log;
 
     public ShopeeLogisticsService(
         IHttpClientFactory httpFactory,
-        IConfiguration cfg,
+        IShopRepo shopRepo,
+        IPartnerRepo partnerRepo,
         ChannelTokenResolver resolver,
         ShopeeOrderService orderService,
         ILogger<ShopeeLogisticsService> log)
     {
         _httpFactory = httpFactory;
-        _cfg = cfg;
+        _shopRepo = shopRepo;
+        _partnerRepo = partnerRepo;
         _resolver = resolver;
         _orderService = orderService;
         _log = log;
@@ -68,16 +72,19 @@ public class ShopeeLogisticsService
         return await DownloadShippingDocumentAsync(shopId, body, ct);
     }
 
+    // -------------------- Core helpers (DB-based partner resolution) --------------------
 
-    private (int partnerId, string partnerKey, string environment) GetPartner()
+    private async Task<(long partnerId, string partnerKey, string environment)> GetPartnerFromDbAsync(long shopId, CancellationToken ct)
     {
-        var partnerId = _cfg.GetValue<int>("Shopee:PartnerId");
-        var partnerKey = _cfg.GetValue<string>("Shopee:PartnerKey")!;
-        var env = _cfg.GetValue<string>("Shopee:Environment") ?? "prod";
-        return (partnerId, partnerKey, env);
-    }
+        var (partnersId, accountIdBig, _) = await _shopRepo.GetShopBindingAsync(shopId, ct);
 
-    // -------------------- Core helpers --------------------
+        var cfg = await _partnerRepo.GetConfigByPartnersIdAsync(partnersId, ct)
+                  ?? throw new InvalidOperationException($"Partners config not found: {partnersId}");
+        if (cfg.PartnerId is null || string.IsNullOrWhiteSpace(cfg.PartnerKey))
+            throw new InvalidOperationException("Shopee PartnerId/PartnerKey is required");
+
+        return (cfg.PartnerId.Value, cfg.PartnerKey!, cfg.Environment ?? "prod");
+    }
 
     private async Task<(string url, HttpClient http)> BuildSignedGetAsync(
         string apiPath,
@@ -85,9 +92,8 @@ public class ShopeeLogisticsService
         Dictionary<string, string?> extraQuery,
         CancellationToken ct)
     {
-        var (partnerId, partnerKey, envCfg) = GetPartner();
+        var (partnerId, partnerKey, envCfg) = await GetPartnerFromDbAsync(shopId, ct);
 
-        // Get token & actual environment stored (could differ from cfg)
         var (accessToken, environment, _, _) = await _resolver.GetAccessTokenAsync(
             channel: "shopee",
             environment: envCfg,
@@ -101,7 +107,7 @@ public class ShopeeLogisticsService
         var ts = UnixTime.NowSeconds();
 
         var sign = ShopeeSign.BuildShopSign(
-            partnerId: partnerId,
+            partnerId: (int)partnerId,
             partnerKey: partnerKey,
             apiPath: apiPath,
             timestamp: ts,
@@ -134,7 +140,7 @@ public class ShopeeLogisticsService
         Dictionary<string, string?>? extraQuery,
         CancellationToken ct)
     {
-        var (partnerId, partnerKey, envCfg) = GetPartner();
+        var (partnerId, partnerKey, envCfg) = await GetPartnerFromDbAsync(shopId, ct);
 
         var (accessToken, environment, _, _) = await _resolver.GetAccessTokenAsync(
             channel: "shopee",
@@ -149,7 +155,7 @@ public class ShopeeLogisticsService
         var ts = UnixTime.NowSeconds();
 
         var sign = ShopeeSign.BuildShopSign(
-            partnerId: partnerId,
+            partnerId: (int)partnerId,
             partnerKey: partnerKey,
             apiPath: apiPath,
             timestamp: ts,
@@ -187,6 +193,23 @@ public class ShopeeLogisticsService
             apiPath: ShopeeApiPaths.LogiGetShippingParam,
             shopId: shopId,
             extraQuery: new Dictionary<string, string?> { ["order_sn"] = orderSn },
+            ct);
+
+        var res = await http.GetAsync(url, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        res.EnsureSuccessStatusCode();
+        return body;
+    }
+
+    /// <summary>
+    /// logistics/get_address_list (GET) — fallback เมื่อ get_shipping_parameter return address_list ว่าง
+    /// </summary>
+    public async Task<string> GetAddressListAsync(long shopId, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedGetAsync(
+            apiPath: ShopeeApiPaths.LogiGetAddressList,
+            shopId: shopId,
+            extraQuery: new Dictionary<string, string?>(),
             ct);
 
         var res = await http.GetAsync(url, ct);
@@ -261,6 +284,42 @@ public class ShopeeLogisticsService
         var res = await http.PostJsonAsync(url, requestBody, ct);
         res.EnsureSuccessStatusCode();
         return await res.Content.ReadAsByteArrayAsync(ct);
+    }
+
+    /// <summary>
+    /// logistics/get_shipping_document_parameter (POST)
+    /// ดึงประเภท AWB ที่เลือกได้สำหรับ order
+    /// </summary>
+    public async Task<string> GetShippingDocumentParameterAsync(long shopId, object requestBody, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedPostAsync(
+            apiPath: ShopeeApiPaths.LogiGetShippingDocParam,
+            shopId: shopId,
+            extraQuery: null,
+            ct);
+
+        var res = await http.PostJsonAsync(url, requestBody, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        res.EnsureSuccessStatusCode();
+        return body;
+    }
+
+    /// <summary>
+    /// logistics/create_shipping_document (POST)
+    /// สร้าง shipping document task (ก่อน download ได้)
+    /// </summary>
+    public async Task<string> CreateShippingDocumentAsync(long shopId, object requestBody, CancellationToken ct = default)
+    {
+        var (url, http) = await BuildSignedPostAsync(
+            apiPath: ShopeeApiPaths.LogiCreateShippingDoc,
+            shopId: shopId,
+            extraQuery: null,
+            ct);
+
+        var res = await http.PostJsonAsync(url, requestBody, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        res.EnsureSuccessStatusCode();
+        return body;
     }
 
     // -------------------- Generic helpers (GET/POST) --------------------
