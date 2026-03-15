@@ -103,6 +103,8 @@ public class MarketplaceOrderActionsController : ControllerBase
     public async Task<IActionResult> ProcessShipmentBatch(
         [FromQuery] Platform platform,
         [FromQuery] long shopId,
+        [FromQuery] long? timeFrom = null,
+        [FromQuery] long? timeTo = null,
         CancellationToken ct = default)
     {
         // ดึง order ที่พร้อม ship: PAID + LOGISTICS_READY
@@ -111,6 +113,18 @@ public class MarketplaceOrderActionsController : ControllerBase
                      && o.FulfillmentStatus == "LOGISTICS_READY"
                      && o.Channel == platform.ToString()
                      && o.ShopId == shopId);
+
+        // กรองตาม CreatedTimeUtc (unix seconds → DateTime)
+        if (timeFrom.HasValue)
+        {
+            var from = DateTimeOffset.FromUnixTimeSeconds(timeFrom.Value).UtcDateTime;
+            q = q.Where(o => o.CreatedTimeUtc >= from);
+        }
+        if (timeTo.HasValue)
+        {
+            var to = DateTimeOffset.FromUnixTimeSeconds(timeTo.Value).UtcDateTime;
+            q = q.Where(o => o.CreatedTimeUtc <= to);
+        }
 
         var pendingOrders = await q
             .OrderBy(o => o.CreatedTimeUtc)
@@ -202,13 +216,8 @@ public class MarketplaceOrderActionsController : ControllerBase
                 // already shipped
                 if (errMsg != null && errMsg.Contains("not eligible for rescheduling", StringComparison.OrdinalIgnoreCase))
                 {
-                    // re-fetch + update DB
-                    try
-                    {
-                        var rj = await _shopeeOrder.GetOrderDetailRawAsync(shopIdVal, orderRef, ct);
-                        await _writer.UpsertFromShopeeRawAsync(shopIdVal, null, ExtractShopeeNativeOrder(rj), null, ct);
-                    }
-                    catch { /* ignore */ }
+                    // sync status จาก platform ผ่าน normalize/by-ref
+                    await SyncOrderFromPlatformAsync(platform.ToString(), shopIdVal, orderRef, ct);
 
                     // auto create-label
                     string? labelMsg;
@@ -229,15 +238,26 @@ public class MarketplaceOrderActionsController : ControllerBase
         var shipBody = BuildShopeeShipBody(orderRef, paramJson);
         var shipResponse = await _shopeeLogi.ShipOrderAsync(shopIdVal, shipBody, ct);
 
-        // 4. re-fetch → update DB
-        try
+        // 4. ตรวจ ship_order response ว่าสำเร็จไหม
+        using (var shipDoc = JsonDocument.Parse(shipResponse))
         {
-            var detailJson = await _shopeeOrder.GetOrderDetailRawAsync(shopIdVal, orderRef, ct);
-            await _writer.UpsertFromShopeeRawAsync(shopIdVal, null, ExtractShopeeNativeOrder(detailJson), null, ct);
+            var shipRoot = shipDoc.RootElement;
+            if (shipRoot.TryGetProperty("error", out var shipErr)
+                && shipErr.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(shipErr.GetString()))
+            {
+                var shipErrMsg = shipRoot.TryGetProperty("message", out var sMsg) ? sMsg.GetString() : "";
+                _log.LogWarning("ship_order failed for {OrderRef}: {Error} - {Message}", orderRef, shipErr.GetString(), shipErrMsg);
+                return ("ERROR", $"ship_order failed: {shipErr.GetString()} — {shipErrMsg}");
+            }
         }
-        catch (Exception ex) { _log.LogWarning(ex, "Re-fetch failed: {OrderRef}", orderRef); }
 
-        // 5. auto create-label
+        // 5. รอให้ platform process แล้ว sync status ผ่าน normalize/by-ref
+        _log.LogInformation("ship_order done for {OrderRef}, waiting 2s before sync...", orderRef);
+        await Task.Delay(2000, ct);
+        await SyncOrderFromPlatformAsync(platform.ToString(), shopIdVal, orderRef, ct);
+
+        // 6. auto create-label
         string? lbl;
         try { lbl = await CreateAndSaveLabelAsync("Shopee", shopIdVal, orderRef, ct); }
         catch (Exception ex) { lbl = $"Label failed: {ex.Message}"; }
@@ -358,12 +378,28 @@ public class MarketplaceOrderActionsController : ControllerBase
 
                     platformResponse = await _shopeeLogi.ShipOrderAsync(req.ShopId, shipBody, ct);
 
-                    // 4. Re-fetch → update DB
-                    var detailJson = await _shopeeOrder.GetOrderDetailRawAsync(req.ShopId, req.OrderRef, ct);
-                    var nativeOrder = ExtractShopeeNativeOrder(detailJson);
-                    await _writer.UpsertFromShopeeRawAsync(req.ShopId, null, nativeOrder, null, ct);
+                    // 4. ตรวจ ship_order response ว่าสำเร็จไหม
+                    using (var shipDoc = JsonDocument.Parse(platformResponse))
+                    {
+                        var shipRoot = shipDoc.RootElement;
+                        if (shipRoot.TryGetProperty("error", out var shipErr)
+                            && shipErr.ValueKind == JsonValueKind.String
+                            && !string.IsNullOrWhiteSpace(shipErr.GetString()))
+                        {
+                            return BadRequest(new
+                            {
+                                message = "ship_order failed.",
+                                orderRef = req.OrderRef,
+                                platformResponse = TryParseJson(platformResponse)
+                            });
+                        }
+                    }
 
-                    // 5. Auto-chain: create-label → save to disk → insert DB
+                    // 5. รอ platform process แล้ว sync status ผ่าน normalize/by-ref
+                    await Task.Delay(2000, ct);
+                    await SyncOrderFromPlatformAsync(req.Platform.ToString(), req.ShopId, req.OrderRef, ct);
+
+                    // 6. Auto-chain: create-label → save to disk → insert DB
                     string? labelMessage = null;
                     try
                     {
@@ -757,7 +793,7 @@ public class MarketplaceOrderActionsController : ControllerBase
 
     /// <summary>
     /// ถ้า get_shipping_parameter return pickup.address_list ว่าง
-    /// → fallback ไปเรียก get_address_list แล้ว inject address_id + pickup_time_id กลับเข้า paramJson
+    /// → fallback ไปเรียก get_address_list แล้ว inject address_id กลับ + เก็บ time_slot_list เดิม
     /// </summary>
     private async Task<string> EnrichPickupAddressIfEmpty(string paramJson, long shopId, CancellationToken ct)
     {
@@ -817,33 +853,109 @@ public class MarketplaceOrderActionsController : ControllerBase
 
             _log.LogInformation("Resolved pickup address_id={AddressId} from get_address_list", resolvedAddrId.Value);
 
-            // สร้าง paramJson ใหม่ที่ inject address_list + time_slot_list
-            var ts = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds();
-            var enriched = new
+            // เก็บ time_slot_list เดิมจาก get_shipping_parameter (ถ้ามี)
+            string originalTimeSlotJson = "[]";
+            if (pickup.TryGetProperty("time_slot_list", out var origTimeSlots)
+                && origTimeSlots.ValueKind == JsonValueKind.Array
+                && origTimeSlots.GetArrayLength() > 0)
             {
-                error = root.TryGetProperty("error", out var e) ? e.GetString() : "",
-                message = root.TryGetProperty("message", out var m) ? m.GetString() : "",
-                response = new
-                {
-                    info_needed = new
-                    {
-                        pickup = new[] { "address_id", "pickup_time_id" }
-                    },
-                    pickup = new
-                    {
-                        address_list = new[] { new { address_id = resolvedAddrId.Value } },
-                        time_slot_list = new[] { new { pickup_time_id = $"SGT{DateTime.UtcNow:yyyyMMdd}-1", date = ts } }
-                    }
-                }
-            };
+                originalTimeSlotJson = origTimeSlots.GetRawText();
+            }
 
-            return JsonSerializer.Serialize(enriched);
+            // สร้าง paramJson ใหม่ — inject แค่ address_id + เก็บ time_slot_list เดิม
+            var enrichedJson = $@"{{
+                ""error"": """",
+                ""message"": """",
+                ""response"": {{
+                    ""info_needed"": {{ ""pickup"": [""address_id"", ""pickup_time_id""] }},
+                    ""pickup"": {{
+                        ""address_list"": [{{ ""address_id"": {resolvedAddrId.Value} }}],
+                        ""time_slot_list"": {originalTimeSlotJson}
+                    }}
+                }}
+            }}";
+
+            return enrichedJson;
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to fallback to get_address_list for shop {ShopId}", shopId);
             return paramJson;
         }
+    }
+
+    /// <summary>
+    /// อัพเดท OrderStatus + FulfillmentStatus ใน DB ตรงๆ
+    /// ป้องกัน batch หยิบ order ซ้ำ
+    /// </summary>
+    private async Task UpdateOrderStatusAsync(
+        string channel, long shopId, string orderRef,
+        string newOrderStatus, string newFulfillmentStatus,
+        CancellationToken ct)
+    {
+        try
+        {
+            var order = await _db.UnifiedOrders
+                .FirstOrDefaultAsync(o => o.Channel == channel
+                                       && o.ShopId == shopId
+                                       && o.ExternalOrderNo == orderRef, ct);
+            if (order is not null)
+            {
+                order.OrderStatus = newOrderStatus;
+                order.FulfillmentStatus = newFulfillmentStatus;
+                order.ShippedTimeUtc ??= DateTime.UtcNow;
+                await _db.SaveChangesAsync(ct);
+                _log.LogInformation("Updated DB status: {OrderRef} → {Status}/{Fulfillment}",
+                    orderRef, newOrderStatus, newFulfillmentStatus);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to update DB status for {OrderRef}", orderRef);
+        }
+    }
+
+    /// <summary>
+    /// Sync order status จาก platform ผ่าน normalize/by-ref
+    /// → เรียก internal HTTP → normalize pipeline จะ fetch order จริงจาก Shopee → update DB
+    /// ถ้า normalize ไม่สำเร็จ → fallback อัพเดท status ตรงใน DB
+    /// </summary>
+    private async Task SyncOrderFromPlatformAsync(
+        string channel, long shopId, string orderRef, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpFactory.CreateClient("OrdersApi");
+            if (Request.Headers.TryGetValue("Authorization", out var auth))
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
+
+            var url = $"/api/market/normalize/by-ref" +
+                      $"?platform={Uri.EscapeDataString(channel)}" +
+                      $"&shopId={shopId}" +
+                      $"&orderRef={Uri.EscapeDataString(orderRef)}";
+
+            _log.LogInformation("SyncOrder: calling normalize/by-ref for {OrderRef}...", orderRef);
+            var resp = await client.PostAsync(url, null, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                _log.LogInformation("SyncOrder: normalize/by-ref success for {OrderRef}: {Body}",
+                    orderRef, body.Length > 500 ? body[..500] : body);
+                return; // DB updated ผ่าน normalize pipeline แล้ว
+            }
+
+            _log.LogWarning("SyncOrder: normalize/by-ref failed ({Status}) for {OrderRef}: {Body}",
+                resp.StatusCode, orderRef, body.Length > 300 ? body[..300] : body);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "SyncOrder: normalize/by-ref exception for {OrderRef}", orderRef);
+        }
+
+        // fallback: อัพเดท status ตรงใน DB
+        _log.LogInformation("SyncOrder: fallback direct DB update for {OrderRef}", orderRef);
+        await UpdateOrderStatusAsync(channel, shopId, orderRef, "READY_TO_SHIP", "SHIPPED", ct);
     }
 
     private static object? TryParseJson(string json)
@@ -923,15 +1035,25 @@ public class MarketplaceOrderActionsController : ControllerBase
                         pickupTimeId = dateEl.ToString();
                 }
 
-                // ถ้า address/time slot ว่าง → throw error ชัดเจน
-                if (addressId is null || pickupTimeId is null)
+                // address_id ต้องมี
+                if (addressId is null)
                 {
-                    var missing = new List<string>();
-                    if (addressId is null) missing.Add("address_id (address_list empty — ตั้งค่าที่อยู่รับพัสดุใน Shopee Seller Centre)");
-                    if (pickupTimeId is null) missing.Add("pickup_time_id (time_slot_list empty)");
                     throw new InvalidOperationException(
-                        $"Shopee pickup data incomplete: {string.Join(", ", missing)}" +
+                        "Shopee pickup data incomplete: address_id (address_list empty — ตั้งค่าที่อยู่รับพัสดุใน Shopee Seller Centre)" +
                         (warning != null ? $" | warning: {warning}" : ""));
+                }
+
+                // ถ้า time_slot_list ว่าง → ส่ง pickup แค่ address_id (ไม่ต้อง pickup_time_id)
+                if (pickupTimeId is null)
+                {
+                    return new
+                    {
+                        order_sn = orderSn,
+                        pickup = new
+                        {
+                            address_id = addressId
+                        }
+                    };
                 }
 
                 return new
