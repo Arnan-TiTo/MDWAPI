@@ -497,7 +497,7 @@
     </div>
 
     <script>
-    const LIFF_ID = '2009472836-ju6Buk3K';
+    let LIFF_ID = null;  // loaded dynamically from /api/line/config
     const API_BASE = '';  // same origin
 
     let currentMember = null;
@@ -525,6 +525,19 @@
     // ── Init ──
     async function init() {
         try {
+            // Load LIFF ID from API
+            if (!LIFF_ID) {
+                try {
+                    const cfgResp = await fetch(`${API_BASE}/api/line/config`);
+                    const cfg = await cfgResp.json();
+                    LIFF_ID = cfg.liffId;
+                    console.log('[LIFF] Loaded LIFF ID:', LIFF_ID);
+                } catch (e) {
+                    console.error('[LIFF] Failed to load config', e);
+                }
+            }
+            if (!LIFF_ID) { document.body.innerHTML = '<p style="padding:20px;text-align:center">ไม่พบ LIFF Config กรุณาตั้งค่า LINE OA ก่อน</p>'; return; }
+
             try {
                 await liff.init({ liffId: LIFF_ID });
             } catch (liffErr) {
@@ -555,7 +568,7 @@
             const { ok, data } = await apiFetch(`${API_BASE}/api/line/auth`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accessToken: lineAccessToken })
+                body: JSON.stringify({ accessToken: lineAccessToken, liffId: LIFF_ID })
             });
 
             if (!ok) throw new Error('Auth failed');

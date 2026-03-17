@@ -28,7 +28,8 @@ public class MemberService
             ConsentAccepted = req.ConsentAccepted,
             ConsentedAt = req.ConsentAccepted ? DateTime.UtcNow : null,
             RegisteredAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            CompanysId = req.CompanysId      // ← set จาก LIFF → LineOaConfig
         };
 
         _db.Members_Mbw.Add(member);
@@ -52,13 +53,43 @@ public class MemberService
                 DisplayName = req.DisplayName,
                 PictureUrl = req.LinePictureUrl,
                 LinkedAt = DateTime.UtcNow,
-                IsActive = true
+                IsActive = true,
+                CompanysId = req.CompanysId  // ← set จาก LIFF → LineOaConfig
             });
         }
 
         await _db.SaveChangesAsync();
 
         return await GetProfileAsync(member.MemberId);
+    }
+
+    /// <summary>ถ้า Member/MemberIdentity ยังไม่มี CompanysId → set ให้</summary>
+    public async Task EnsureCompanysIdAsync(string lineUserId, int? companysId)
+    {
+        if (companysId == null) return;
+
+        var identity = await _db.MemberIdentities
+            .Include(x => x.Member)
+            .FirstOrDefaultAsync(x => x.ProviderUserKey == lineUserId && x.IsActive);
+
+        if (identity == null) return;
+
+        bool changed = false;
+
+        if (identity.CompanysId == null)
+        {
+            identity.CompanysId = companysId;
+            changed = true;
+        }
+
+        if (identity.Member.CompanysId == null)
+        {
+            identity.Member.CompanysId = companysId;
+            changed = true;
+        }
+
+        if (changed)
+            await _db.SaveChangesAsync();
     }
 
     /// <summary>ดู profile สมาชิก</summary>

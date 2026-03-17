@@ -12,6 +12,9 @@ public class MemberRegisterRequest
     public string? LineProviderType { get; set; }   // LINE_LOGIN / LINE_OA
     public string? LineUserId { get; set; }
     public string? LinePictureUrl { get; set; }
+
+    // Company association (resolved from LIFF ID → LineOaConfig)
+    public int? CompanysId { get; set; }
 }
 
 public class MemberProfileDto

@@ -34,6 +34,44 @@ public class LineController : ControllerBase
     }
 
     // ═══════════════════════════════════════════════
+    // Public Config (no auth — LIFF ID is not secret)
+    // ═══════════════════════════════════════════════
+
+    /// <summary>
+    /// คืน LIFF ID + Login Channel ID (ไม่ต้อง auth เพราะไม่ใช่ secret)
+    /// GET /api/line/config
+    /// GET /api/line/config?companyId=1
+    /// GET /api/line/config?liffId=2009472836-xxx
+    /// GET /api/line/config?domain=shop.vibeandchic.com
+    /// ถ้าไม่ส่ง param = ใช้ตัวแรกที่ active (backward compat)
+    /// </summary>
+    [HttpGet("config")]
+    public async Task<IActionResult> GetConfig(
+        [FromQuery] int? companyId = null,
+        [FromQuery] string? liffId = null,
+        [FromQuery] string? domain = null)
+    {
+        var query = _db.LineOaConfigs.Where(c => c.IsActive);
+
+        if (companyId.HasValue)
+            query = query.Where(c => c.CompanysId == companyId.Value);
+        else if (!string.IsNullOrEmpty(liffId))
+            query = query.Where(c => c.LiffId == liffId);
+        else if (!string.IsNullOrEmpty(domain))
+            query = query.Where(c => c.LoginCallbackUrl != null && c.LoginCallbackUrl.Contains(domain));
+        // else: ไม่มี param → ใช้ตัวแรกที่ active
+
+        var config = await query
+            .Select(c => new { c.LiffId, c.LoginChannelId, c.LineOaName, c.CompanysId })
+            .FirstOrDefaultAsync();
+
+        if (config == null)
+            return Ok(new { liffId = (string?)null, loginChannelId = (string?)null, companyId = (int?)null });
+
+        return Ok(new { liffId = config.LiffId, loginChannelId = config.LoginChannelId, oaName = config.LineOaName, companyId = config.CompanysId });
+    }
+
+    // ═══════════════════════════════════════════════
     // LINE Login OAuth
     // ═══════════════════════════════════════════════
 
@@ -76,21 +114,25 @@ public class LineController : ControllerBase
                 email = idPayload?.Email;
             }
 
-            // 4. ค้นหา member ที่ผูก LINE userId นี้
+            // 4. หา CompanysId จาก LineLoginService config cache
+            var companysId = await ResolveCompanysIdAsync(null);
+
+            // 5. ค้นหา member ที่ผูก LINE userId นี้
             var existingProfile = await _memberService.GetByLineUserIdAsync(profile.UserId);
 
             if (existingProfile != null)
             {
-                // member มีอยู่แล้ว → return profile
+                // member มีอยู่แล้ว → update CompanysId ถ้ายังไม่มี
+                await _memberService.EnsureCompanysIdAsync(profile.UserId, companysId);
                 return Ok(new
                 {
                     isNewMember = false,
-                    member = existingProfile,
+                    member = await _memberService.GetByLineUserIdAsync(profile.UserId),
                     lineAccessToken = tokenResp.AccessToken
                 });
             }
 
-            // 5. สมัครสมาชิกใหม่
+            // 6. สมัครสมาชิกใหม่ + set CompanysId
             var newMember = await _memberService.RegisterAsync(new MemberRegisterRequest
             {
                 DisplayName = profile.DisplayName,
@@ -98,7 +140,8 @@ public class LineController : ControllerBase
                 ConsentAccepted = true,
                 LineProviderType = "LINE_LOGIN",
                 LineUserId = profile.UserId,
-                LinePictureUrl = profile.PictureUrl
+                LinePictureUrl = profile.PictureUrl,
+                CompanysId = companysId
             });
 
             return Ok(new
@@ -129,19 +172,27 @@ public class LineController : ControllerBase
             if (profile == null)
                 return Unauthorized(new { error = "Invalid LINE access token" });
 
+            // หา CompanysId จาก liffId ที่ frontend ส่งมา
+            var companysId = await ResolveCompanysIdAsync(req.LiffId);
+
             // ค้นหา member
             var existing = await _memberService.GetByLineUserIdAsync(profile.UserId);
             if (existing != null)
-                return Ok(new { isNewMember = false, member = existing });
+            {
+                // update CompanysId ถ้ายังไม่มี
+                await _memberService.EnsureCompanysIdAsync(profile.UserId, companysId);
+                return Ok(new { isNewMember = false, member = await _memberService.GetByLineUserIdAsync(profile.UserId) });
+            }
 
-            // สร้างใหม่
+            // สร้างใหม่ + set CompanysId
             var newMember = await _memberService.RegisterAsync(new MemberRegisterRequest
             {
                 DisplayName = profile.DisplayName,
                 ConsentAccepted = true,
                 LineProviderType = "LINE_LOGIN",
                 LineUserId = profile.UserId,
-                LinePictureUrl = profile.PictureUrl
+                LinePictureUrl = profile.PictureUrl,
+                CompanysId = companysId
             });
 
             return Ok(new { isNewMember = true, member = newMember });
@@ -285,10 +336,35 @@ public class LineController : ControllerBase
                $"📊 รวมสะสม: {account.TotalEarned:N0} แต้ม\n" +
                $"🎁 ใช้ไปแล้ว: {account.TotalBurned:N0} แต้ม";
     }
+
+    // ═══════════════════════════════════════════════
+    // Helper: resolve CompanysId from LIFF ID
+    // ═══════════════════════════════════════════════
+
+    /// <summary>หา CompanysId จาก liffId (frontend ส่งมา) หรือ config ตัวแรกที่ active</summary>
+    private async Task<int?> ResolveCompanysIdAsync(string? liffId)
+    {
+        if (!string.IsNullOrEmpty(liffId))
+        {
+            var config = await _db.LineOaConfigs
+                .Where(c => c.IsActive && c.LiffId == liffId)
+                .Select(c => (int?)c.CompanysId)
+                .FirstOrDefaultAsync();
+            if (config.HasValue) return config;
+        }
+
+        // Fallback: ใช้ config ตัวแรกที่ active
+        return await _db.LineOaConfigs
+            .Where(c => c.IsActive)
+            .Select(c => (int?)c.CompanysId)
+            .FirstOrDefaultAsync();
+    }
 }
 
 // ─── Request DTOs ─────────────────────────────────
 public class LineAuthRequest
 {
     public string AccessToken { get; set; } = default!;
+    /// <summary>LIFF ID ที่ frontend ใช้ — เพื่อ match กลับหา CompanysId</summary>
+    public string? LiffId { get; set; }
 }
