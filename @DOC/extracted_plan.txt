@@ -1,0 +1,778 @@
+=== PAGE 1 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+เอกสารออกแบบระบบสมาชิกและสะสมแต้ม 
+LINE Official Account + Shopee + TikTok Shop 
+รองรับ 1 member หลาย platform account, manual mapping โดย admin ในระยะแรก และออกแบบเผื่อ 
+auto-mapping จากข้อความ LINE / ฟอร์มสมาชิกในอนาคต 
+  
+ 
+ชื่อเอกสาร 
+รายละเอียด 
+ชื่อเอกสาร 
+System Design & Development Plan สำหรับระบบสมาชิกและสะสมแต้ม 
+เวอร์ชัน 
+1.0 
+วัตถุประสงค์ 
+ใช้เป็นเอกสารตั้งต้นสำหรับทีม Business, Developer, DBA, QA และ Admin 
+ขอบเขต 
+สมัครสมาชิกผ่าน LINE, Mapping account กับ Shopee/TikTok, Earn/Burn 
+points, Discount code redemption, Audit log 
+ 
+แนวคิดหลักของเอกสารนี้ 
+ข้อมูลตัวตนของลูกค้าจาก LINE และข้อมูลลูกค้าบน marketplace เป็นคนละโดเมนของข้อมูล 
+จึงต้องออกแบบ “ชั้น mapping” กลางของระบบ 
+• ระยะเริ่มต้นใช้ manual mapping โดย admin เพื่อให้เริ่มใช้งานได้เร็วและควบคุมคุณภาพข้อมูล 
+• ออกแบบตารางและ API เผื่อรองรับการพัฒนาแบบ auto-mapping จากข้อความ LINE 
+และจากแบบฟอร์มสมาชิกในอนาคต 
+ 
+ 
+
+=== PAGE 2 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+สารบัญย่อ 
+หัวข้อ 
+รายละเอียด 
+1. เป้าหมายและขอบเขต 
+วัตถุประสงค์เชิงธุรกิจ, ขอบเขต MVP และข้อกำหนดหลัก 
+2. โมเดลการสมัครสมาชิกและ 
+Mapping 
+รองรับ 1 member : N platform accounts และ 3 แนวทาง 
+mapping 
+3. Business Flow หลัก 
+ลงทะเบียน, sync order, earn, burn, reverse, reconciliation 
+4. 
+โครงสร้างข้อมูลและตารางฐานข้อมู
+ล 
+ตารางหลัก, ความสัมพันธ์, ดัชนีสำคัญ และ log 
+5. API และ Integration 
+External platform APIs และ internal APIs 
+6. Frontend / Backoffice 
+หน้าจอฝั่ง member และ admin 
+7. Roadmap การพัฒนา 
+Phase 1–3 และข้อควบคุมด้านความปลอดภัย 
+1. เป้าหมายและขอบเขต 
+1.1 เป้าหมายเชิงธุรกิจ 
+• ให้ลูกค้าสมัครสมาชิกผ่าน LINE Official Account และสามารถใช้แต้มข้ามการซื้อสินค้าบน Shopee และ 
+TikTok Shop ได้ภายใต้กติกาของแบรนด์ 
+• รองรับการคิดคะแนนจากยอดซื้อ (ตัวอย่าง 100 บาท = 1 คะแนน) หรือสูตร earn แบบยืดหยุ่นตาม campaign, 
+หมวดสินค้า, ช่องทางขาย หรือช่วงเวลา 
+• เมื่อลูกค้าใช้คะแนน ระบบต้องสามารถจองแต้ม, สร้างหรือจ่าย code ส่วนลดของแต่ละ platform, ส่ง code 
+ให้ลูกค้าทาง LINE และบันทึก burn log ได้ครบถ้วน 
+• สามารถตรวจสอบย้อนหลังได้ว่าแต้มมาจาก order ใด ใช้ไปกับ reward ใด และมีการปรับปรุง/ย้อนกลับเมื่อใด 
+1.2 ขอบเขต MVP ที่แนะนำ 
+• สมัครสมาชิกผ่าน LINE Login / LIFF และเก็บความยินยอมการใช้งาน 
+• 1 member สามารถผูกได้หลาย account บน Shopee และ TikTok Shop 
+• เริ่มต้นด้วย manual mapping โดย admin จากข้อมูลที่ member แจ้งมา 
+
+=== PAGE 3 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+• รองรับการรับข้อมูล account จาก 2 ช่องทางในอนาคต: (1) ข้อความ LINE ที่ member ส่งเข้ามา และ (2) 
+แบบฟอร์มสมาชิกที่ member กรอก 
+• เชื่อม order sync จาก platform แล้วคำนวณ earn points ตาม policy 
+• รองรับ redemption แบบใช้แต้มแลก code ส่วนลด และบันทึก Point Ledger / Burn Log 
+1.3 หลักการออกแบบที่ควรยึด 
+• แยกโดเมน Member Identity, Marketplace Order, Loyalty Ledger และ Integration Log ออกจากกัน 
+• ทุก transaction ของแต้มต้องลง ledger แบบตรวจสอบย้อนหลังได้ 
+• mapping ระหว่าง member กับ platform account ต้องมีระดับความมั่นใจ (confidence) 
+และแหล่งที่มาของหลักฐาน (evidence source) 
+• ต้องรองรับทั้ง manual และ auto mapping โดยไม่ต้องแก้โครงสร้างฐานข้อมูลหลักใหม่ในอนาคต 
+2. โมเดลการสมัครสมาชิกและการ Mapping ตัวตน 
+2.1 โมเดลข้อมูลหลัก 
+• Member คือเจ้าของบัญชีสมาชิกในระบบของแบรนด์ 1 ราย 
+• Member 1 ราย มี LINE identity ได้ 1 หรือมากกว่า 1 identity ตามการเชื่อมต่อในอนาคต 
+• Member 1 ราย ผูกกับ platform account ได้หลายรายการ เช่น Shopee 2 บัญชี + TikTok 1 บัญชี 
+• Platform account 1 รายการ ควรผูกกับ member ได้สูงสุด 1 คนต่อร้าน เพื่อป้องกันการนับแต้มซ้ำ 
+2.2 แนวทางการ Mapping ที่รองรับ 
+วิธี 
+ผู้เริ่มต้น 
+ข้อมูลนำเข้า 
+สถานะในระบบ 
+เหมาะกับ 
+Manual 
+Mapping 
+Admin 
+LINE member + account 
+ที่ลูกค้าแจ้ง + 
+store/platform 
+Verified 
+MVP / 
+งานที่ต้องการ
+ความแม่นยำ
+สูง 
+Form-based 
+Mapping 
+Member 
+แบบฟอร์มกรอก account, 
+ชื่อร้าน, เบอร์, optional 
+order no. 
+Pending Review / 
+Auto Verify 
+ลดงาน 
+admin 
+และสร้างฐาน
+ข้อมูลสำหรับ 
+automation 
+
+=== PAGE 4 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+วิธี 
+ผู้เริ่มต้น 
+ข้อมูลนำเข้า 
+สถานะในระบบ 
+เหมาะกับ 
+LINE Message 
+Parsing 
+System 
+อ่านข้อความ LINE 
+ที่ลูกค้าส่งมา เช่น 
+user/account/shop/order 
+Suggested Match 
+อนาคต: 
+สร้าง 
+candidate 
+ให้ admin 
+ตรวจอนุมัติ 
+2.3 กติกาการอนุมัติ Mapping 
+• ทุกคำขอ mapping ควรถูกเก็บเป็น request ก่อน แล้วค่อยสร้างความสัมพันธ์จริงใน 
+MemberPlatformAccounts หลังผ่านการอนุมัติ 
+• ควรบันทึก source ของคำขอ เช่น ADMIN, MEMBER_FORM, LINE_MESSAGE, IMPORT 
+• ถ้าเป็น auto-mapping จากข้อความหรือจากแบบฟอร์ม ระบบควรสร้าง Suggested Match พร้อม 
+confidence score แทนการผูกจริงทันที 
+• เมื่อต้องการระบบอัตโนมัติเต็มรูปแบบในอนาคต ให้เพิ่ม verification rule เช่น เบอร์ท้าย 4 ตัว, ชื่อบัญชี, 
+เลขคำสั่งซื้อ, coupon code ที่เคยใช้, หรือ OTP / one-time verification 
+ระดับความเ
+ชื่อมั่น 
+ตัวอย่างเงื่อนไข 
+การทำงานระบบ 
+การอนุมัติ 
+High 
+member กรอก account 
+ผ่านฟอร์มและยืนยันซ้ำด้วย 
+order/coupon ที่ตรวจสอบได้ 
+สร้าง candidate 
+พร้อมแนะนำ auto-
+approve rule 
+อนุมัติอัตโนมัติได้เมื่อ
+เปิดใช้ในอนาคต 
+Medium 
+ข้อความ LINE ระบุ account 
+และข้อมูลบางส่วนตรงกับ order 
+สร้าง candidate ให้ 
+admin ตรวจ 
+ต้องมี admin 
+review 
+Low 
+ข้อมูลไม่ครบหรือมีหลาย account 
+ใกล้เคียงกัน 
+บันทึกไว้เป็น lead 
+เท่านั้น 
+ห้ามนับแต้มจนกว่าจ
+ะยืนยัน 
+3. Business Flow หลักของระบบ 
+3.1 Flow การสมัครสมาชิกและการผูก account 
+1. ลูกค้า Add LINE OA และเปิด LIFF / หน้าแบบฟอร์มสมัครสมาชิก 
+2. ระบบสร้าง Member และบันทึก LINE identity ของลูกค้า 
+
+=== PAGE 5 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+3. ลูกค้าระบุ account บน Shopee/TikTok ที่ต้องการใช้สะสมแต้ม โดยกรอกได้มากกว่า 1 account 
+4. ระบบสร้าง MemberMappingRequest แยกตาม platform account ที่แจ้งเข้ามา 
+5. Admin ตรวจสอบและอนุมัติ mapping ใน Backoffice 
+6. เมื่ออนุมัติแล้ว ระบบสร้างระเบียนใน MemberPlatformAccounts และพร้อมใช้กับการคำนวณแต้ม 
+3.2 Flow การอ่านข้อความ LINE เพื่อช่วย mapping ในอนาคต 
+1. รับ webhook ข้อความจาก LINE และเก็บ raw message ลง LineMessageInbox 
+2. ทำ parsing / extraction เพื่อดึงข้อมูลที่เกี่ยวข้อง เช่น platform, account, shop, order no., เบอร์ท้าย 4 ตัว 
+3. สร้าง MemberMappingRequest หรือ MappingSuggestion โดยผูกกับ Member ที่ส่งข้อความเข้ามา 
+4. คำนวณ confidence score แล้วส่งเข้าคิวให้ admin review หรือ auto-verify ตาม rule ที่เปิดใช้ 
+3.3 Flow การสะสมคะแนน (Earn) 
+1. ระบบ sync orders จาก Shopee/TikTok เข้ามาเก็บใน MarketplaceOrders และ MarketplaceOrderItems 
+2. ตรวจสอบว่า order ถูกผูกกับ member ผ่าน MemberPlatformAccounts หรือผ่าน OrderClaim/Mapping 
+ที่ยืนยันแล้ว 
+3. ตรวจสอบสถานะ order ว่าเข้าเงื่อนไขการให้แต้ม เช่น completed / delivered / ผ่านระยะคืนสินค้า 
+4. คำนวณคะแนนจาก PointPolicy ที่ effective ในเวลานั้น 
+5. ลงรายการ PointLedger ประเภท EARN และปรับยอดใน PointAccounts 
+3.4 Flow การใช้คะแนน (Burn) 
+1. Member เลือก reward หรือแลกส่วนลดผ่านหน้า LIFF 
+2. ระบบตรวจสอบยอดคงเหลือและทำ RESERVE points ก่อน 
+3. ระบบไปหยิบหรือสร้าง code ส่วนลดของ platform ที่เลือก แล้วบันทึก RewardRedemptions / 
+RewardCodes 
+4. เมื่อจ่าย code สำเร็จ ให้ลง PointLedger ประเภท BURN และลด reserved points 
+5. ส่ง code ให้ลูกค้าทาง LINE พร้อมเก็บ Outbox / delivery reference 
+6. ถ้าจ่าย code ไม่สำเร็จ ต้องทำ RELEASE points เพื่อคืนแต้ม 
+คำแนะนำสำคัญสำหรับ Flow Burn 
+อย่า burn points ทันทีตั้งแต่กดแลก ควร reserve ก่อน เพื่อรองรับกรณี API ของ platform 
+ล้มเหลวหรือ code หมดอายุ 
+
+=== PAGE 6 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+• ถ้า code ถูกออกแล้วแต่ส่ง LINE ไม่สำเร็จ ให้เก็บสถานะ Issued และมี retry policy แยกจากการ 
+burn แต้ม 
+4. โครงสร้างข้อมูลและตารางฐานข้อมูลที่แนะนำ 
+4.1 กลุ่มตารางสมาชิกและการ Mapping 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+Members 
+เก็บข้อมูลสมาชิกหลัก 
+MemberId, 
+MemberCode, 
+Status 
+เป็น master ของ 
+loyalty account 
+MemberIdentities 
+เก็บ identity จาก LINE 
+หรือช่องทางอื่น 
+ProviderType, 
+ProviderUserKey, 
+MemberId 
+รองรับ LINE OA / 
+LINE Login / 
+อนาคต 
+MemberPlatformAc
+counts 
+เก็บ account ที่ member 
+แจ้งมาว่าเป็นของตนบน 
+Shopee/TikTok 
+PlatformType, 
+ShopId, 
+PlatformAccountKey 
+1 member 
+มีได้หลาย account 
+MemberMappingRe
+quests 
+เก็บคำขอ mapping ทั้ง 
+manual/form/message 
+RequestId, 
+SourceType, 
+RequestStatus 
+ใช้เป็น staging 
+ก่อนอนุมัติจริง 
+MemberMappingEvi
+dence 
+เก็บหลักฐานหรือข้อมูลประ
+กอบการอนุมัติ 
+RequestId, 
+EvidenceType 
+เช่น screenshot, 
+order no., raw 
+message, form 
+payload 
+FormSubmissions 
+เก็บแบบฟอร์มที่ member 
+กรอก 
+SubmissionId, 
+MemberId, 
+FormType 
+ใช้ย้อนรอยต้นทางข
+องคำขอ 
+LineMessageInbox 
+เก็บข้อความ LINE ที่เข้ามา 
+MessageEventId, 
+MemberId, 
+ProcessStatus 
+ใช้สำหรับ parsing 
+และ auto-
+mapping 
+
+=== PAGE 7 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+ฟิลด์แนะนำสำหรับ MemberPlatformAccounts 
+• MemberPlatformAccountId, MemberId, PlatformType, ShopId, PlatformAccountKey, 
+PlatformAccountName, VerifiedStatus, VerifiedAt, VerifiedBy, LinkMethod, ConfidenceScore, 
+EffectiveFrom, EffectiveTo, IsPrimary 
+• ควรมี unique constraint ตาม PlatformType + StoreId + PlatformAccountKey เพื่อไม่ให้ account 
+เดียวถูกผูกกับหลาย member ในร้านเดียวกันโดยไม่ตั้งใจ 
+4.2 กลุ่มตารางร้านค้าและการเชื่อมต่อ platform 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+Shop 
+เก็บร้านค้าบนแต่ละ platform 
+ShopId, 
+PlatformType, 
+ExternalStoreId 
+รองรับหลายร้านต่
+อแบรนด์ 
+ChannelCredential
+s 
+เก็บ token / secret / 
+credential 
+CredentialId, ShopId ต้องเข้ารหัสข้อมูล
+สำคัญ 
+WebhookInbox 
+เก็บ webhook ที่รับเข้ามา 
+InboxId, EventType, 
+EventKey 
+ใช้สำหรับ 
+idempotency 
+และ reprocess 
+ApiCallLogs 
+เก็บ request/response log 
+ระดับ integration 
+ApiLogId, ApiName, 
+RequestRef 
+ใช้ debug และ 
+audit 
+4.3 กลุ่มตารางคำสั่งซื้อและการเชื่อมกับ member 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+UnifiedOrders 
+เก็บ order header จาก 
+Shopee/TikTok 
+UnifiedOrderId, 
+ShopId, 
+ExternalOrderId 
+ควรเก็บ raw 
+payload สำหรับ 
+trace 
+UnifiedOrdersItems เก็บสินค้ารายบรรทัด 
+UnifiedOrderItemId, 
+UnifiedOrderId, SKU 
+ใช้คำนวณแต้มตา
+มสินค้า/หมวด 
+
+=== PAGE 8 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+OrderStatusHistory เก็บประวัติสถานะ order 
+StatusHistoryId, 
+UnifiedOrderId 
+รองรับ 
+reverse/recalcu
+late 
+OrderMemberLinks เก็บผลการผูก order กับ 
+member 
+UnifiedOrderId, 
+MemberId, 
+LinkMethod 
+อาจมาจาก 
+verified 
+account, claim 
+หรือ coupon 
+OrderClaims 
+รองรับการ claim order 
+ย้อนหลัง 
+ClaimId, MemberId, 
+UnifiedOrderId 
+ใช้ในกรณีลูกค้าซื้
+อก่อนสมัครหรือ 
+mapping 
+ไม่พร้อม 
+4.4 กลุ่มตาราง Loyalty / Point Engine 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+PointPolicies 
+เก็บกติกาการคิดแต้มและ 
+version ของสูตร 
+PolicyId, 
+EffectiveFrom, 
+EffectiveTo 
+รองรับเปลี่ยนสูตร
+ในอนาคต 
+PointAccounts 
+เก็บสรุปยอดคงเหลือแต้มต่อ 
+member 
+MemberId 
+อ่านง่ายและเร็วส
+ำหรับหน้าจอ 
+PointLedger 
+เก็บ transaction แต้มทั้งหมด LedgerId, MemberId, 
+TxnType, RefId 
+ตารางสำคัญที่สุด
+สำหรับ audit 
+PointExpirations 
+เก็บแผนหมดอายุของแต้ม 
+(ถ้ามี) 
+ExpirationId, 
+MemberId 
+รองรับ FIFO / 
+monthly 
+bucket 
+PointAdjustments เก็บการปรับแต้มด้วยมือ 
+AdjustmentId, 
+MemberId 
+เชื่อมกับ 
+approval และ 
+admin audit 
+
+=== PAGE 9 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+ฟิลด์แนะนำสำหรับ PointLedger 
+• LedgerId, MemberId, TxnType (EARN, RESERVE, RELEASE, BURN, EARN_REVERSAL, EXPIRE, 
+ADJUST), Points, BalanceAfter, PolicyId, RefType, RefId, OccurredAt, CreatedBy, IdempotencyKey 
+• ควรมี idempotency key สำหรับ transaction ที่มาจาก webhook หรือ job sync เพื่อป้องกันการลงแต้มซ้ำ 
+4.5 กลุ่มตาราง Reward / Redemption 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+RewardCatalog 
+เก็บ reward ที่แลกได้ 
+RewardId, 
+PlatformType, 
+PointsCost 
+รองรับหลายประเ
+ภทของ reward 
+RewardCodes 
+เก็บ code ส่วนลดที่ใช้ได้จริง 
+RewardCodeId, Code, 
+Status 
+จะเป็น pre-
+generated หรือ 
+generated on-
+demand ก็ได้ 
+RewardRedempti
+ons 
+เก็บการแลกแต้มแต่ละครั้ง 
+RedemptionId, 
+MemberId, RewardId 
+เชื่อมกับ 
+PointLedger 
+OutboxMessages เก็บประวัติการส่ง code ผ่าน 
+LINE 
+OutboxId, MemberId, 
+MessageType 
+แยกสถานะส่งข้อ
+ความออกจากการ 
+burn 
+4.6 กลุ่มตาราง Admin / Audit / Monitoring 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+AdminUsers 
+เก็บผู้ใช้งานหลังบ้าน 
+AdminUserId 
+กำหนด role ได้ 
+AdminRoles 
+เก็บสิทธิ์การใช้งาน 
+RoleId 
+แยก mapping admin 
+/ point admin / 
+super admin 
+
+=== PAGE 10 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+ตาราง 
+หน้าที่ 
+คีย์สำคัญ 
+หมายเหตุ 
+AdminAuditLogs บันทึกการทำงานของ admin 
+AuditId, 
+ActionType 
+สำคัญมากสำหรับ 
+manual mapping 
+และ manual 
+adjustment 
+JobRuns 
+บันทึก scheduled jobs 
+JobRunId, 
+JobName 
+ใช้ตรวจงาน 
+sync/recalc 
+5. API และ Integration ที่ต้องเตรียม 
+5.1 External Integration 
+ช่องทาง 
+API/Integration ที่ควรมี 
+ใช้ทำอะไร 
+หมายเหตุการออกแบบ 
+LINE 
+Messaging Webhook, 
+Push/Reply Message, Profile, 
+LINE Login/LIFF 
+สมัครสมาชิก, 
+รับข้อความ, ส่ง code, 
+เก็บ identity 
+แยก webhook 
+message กับ login 
+callback 
+Shopee 
+Authorization, Token Refresh, 
+Order Sync, Order Detail, 
+Promotion/Coupon 
+ดึง order, 
+สร้าง/จ่ายส่วนลด, 
+reconcile 
+ควรห่อเป็น adapter 
+service ของตนเอง 
+TikTok 
+Shop 
+Authorization, Token Refresh, 
+Order Sync, Order Detail, 
+Promotion/Coupon 
+ดึง order, 
+สร้าง/จ่ายส่วนลด, 
+reconcile 
+รองรับ webhook + 
+polling ร่วมกัน 
+5.2 Internal API ที่ระบบของเราเองควรมี 
+กลุ่ม API 
+ตัวอย่าง Endpoint 
+ผู้ใช้ 
+วัตถุประสงค์ 
+Member 
+POST /members/register, GET 
+/members/me 
+LIFF / App 
+สมัครสมาชิกและดูข้อมูลโ
+ปรไฟล์ 
+Mapping 
+POST /mapping-requests, POST 
+/mapping-requests/{id}/approve 
+Member / 
+Admin 
+รับคำขอ mapping 
+และอนุมัติ 
+
+=== PAGE 11 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+กลุ่ม API 
+ตัวอย่าง Endpoint 
+ผู้ใช้ 
+วัตถุประสงค์ 
+Orders 
+GET /members/me/orders, POST 
+/admin/orders/sync 
+Member / 
+Admin / Job 
+ดูรายการ order และ 
+sync ข้อมูล 
+Points 
+GET /members/me/points, POST 
+/admin/points/adjust 
+Member / 
+Admin 
+ดูยอดแต้มและปรับแต้ม 
+Rewards 
+GET /rewards, POST /redemptions Member 
+เลือก reward 
+และแลกแต้ม 
+Webhook 
+POST /webhooks/line, 
+/webhooks/shopee, 
+/webhooks/tiktok 
+External 
+รับ event จาก platform 
+Monitoring 
+GET /admin/webhook-inbox, 
+/admin/api-logs 
+Admin / 
+Support 
+ตรวจสอบข้อผิดพลาดและ 
+retry 
+5.3 กติกา API ที่ควรวางไว้ตั้งแต่ต้น 
+• ทุก endpoint ที่มีผลต่อยอดแต้มควรรับ idempotency key หรือมี ref key ที่ป้องกันการทำรายการซ้ำ 
+• ทุก webhook ต้องลง WebhookInbox ก่อนประมวลผลจริง และรองรับการ replay / reprocess 
+• adapter ของแต่ละ platform ควรมี interface กลาง เช่น GetOrders, GetOrderDetail, 
+IssueDiscountCode, GetCouponStatus เพื่อลดผลกระทบเมื่อ API ภายนอกเปลี่ยน 
+• แยก internal API สำหรับ admin review ออกจาก public member API ให้ชัดเจน 
+6. Frontend และ Backoffice ที่ควรมี 
+6.1 หน้าจอฝั่ง Member (LIFF / Web App) 
+หน้าจอ 
+ผู้ใช้งาน 
+ฟังก์ชันหลัก 
+สถานะในโคร
+งการ 
+Welcome / 
+Register 
+Member 
+สมัครสมาชิก, รับ consent, เชื่อม 
+LINE identity 
+Phase 1 
+Manage Platform 
+Accounts 
+Member 
+เพิ่ม/แก้ไข account Shopee/TikTok 
+ที่ต้องการใช้สะสมแต้ม 
+Phase 1 
+
+=== PAGE 12 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+หน้าจอ 
+ผู้ใช้งาน 
+ฟังก์ชันหลัก 
+สถานะในโคร
+งการ 
+Mapping Form 
+Member 
+กรอกข้อมูล account 
+เพิ่มเติมหรือแนบหลักฐาน 
+Phase 1 
+Point Wallet 
+Member 
+ดู available / reserved / history 
+Phase 1 
+Rewards Catalog 
+Member 
+เลือกรางวัลหรือส่วนลดที่จะแลก 
+Phase 1 
+Redemption Result Member 
+แสดง code ที่ได้รับและเงื่อนไขการใช้ Phase 1 
+Order History / 
+Claim 
+Member 
+ดู order ที่ถูกผูกแล้วหรือ claim order 
+เพิ่ม 
+Phase 2 
+FAQ / Contact 
+Support 
+Member 
+ติดต่อเจ้าหน้าที่และดูคำถามพบบ่อย 
+Phase 1 
+6.2 หน้าจอฝั่ง Admin / Backoffice 
+หน้าจอ 
+หน้าที่ 
+ข้อมูลที่ต้องเห็น 
+Phase 
+Dashboard 
+ดูภาพรวมสมาชิก, แต้ม, 
+redemption, error 
+KPI, failed jobs, pending 
+mapping 
+Phase 1 
+Members 
+ค้นหาและเปิด profile สมาชิก identities, accounts, points, 
+last activity 
+Phase 1 
+Mapping Review 
+ตรวจและอนุมัติการผูก 
+account 
+request source, evidence, 
+confidence 
+Phase 1 
+Order Monitor 
+ตรวจสถานะ sync order 
+raw payload, link result, 
+earn result 
+Phase 1 
+Reward & Code 
+Pool 
+จัดการ reward และ code 
+stock, reserved, issued, 
+redeemed 
+Phase 1 
+Point Ledger / 
+Adjust 
+ดู transaction 
+แต้มและปรับแต้ม 
+ledger entries, adjustment 
+history 
+Phase 1 
+
+=== PAGE 13 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+หน้าจอ 
+หน้าที่ 
+ข้อมูลที่ต้องเห็น 
+Phase 
+Webhook / API 
+Logs 
+ตรวจ event และข้อผิดพลาด 
+integration 
+status, retry, error message Phase 1 
+Mapping 
+Suggestions 
+ดู candidate จาก LINE 
+message / form parsing 
+suggested account, score, 
+reason 
+Phase 2 
+7. Roadmap การพัฒนา 
+Phase 
+ขอบเขตงาน 
+ผลลัพธ์สำคัญ 
+ข้อสังเกต 
+Phase 1: 
+Foundation / 
+MVP 
+LINE login + member register, 
+manual mapping, order sync, 
+point ledger, reward 
+redemption, admin 
+backoffice พื้นฐาน 
+เริ่มใช้งานจริงได้และคว
+บคุมข้อมูลด้วยคน 
+ลดความเสี่ยงและเ
+ริ่มสะสม data set 
+สำหรับ 
+automation 
+Phase 2: Assisted 
+Automation 
+form-based mapping, order 
+claim, mapping suggestion 
+จาก LINE messages, 
+monitoring และ retry 
+ที่สมบูรณ์ขึ้น 
+ลดงาน admin 
+และเพิ่มความเร็วในการ
+ผูก account 
+ยังควรมี human-
+in-the-loop 
+Phase 3: 
+Controlled Auto-
+Mapping 
+เปิด auto-verify บางเงื่อนไข, 
+segmentation, campaign earn 
+engine, fraud controls 
+ขยายระบบแบบ scale 
+ได้มากขึ้น 
+ต้องมี rule 
+governance และ 
+audit ที่ชัดเจน 
+7.1 ลำดับการลงมือทำที่แนะนำ 
+1. ยืนยัน business rule ของ earn / burn / reverse / expiration ให้ชัดก่อนเริ่มพัฒนา 
+2. ปิดขอบเขต MVP ให้เหลือ manual mapping + reward redemption ที่ใช้งานได้จริงก่อน 
+3. ออกแบบ schema และ ledger ให้เสร็จตั้งแต่ต้น เพราะเป็นแกนที่แก้ภายหลังยาก 
+4. สร้าง Backoffice สำหรับ admin review ให้พร้อมก่อนเปิดใช้งานจริง 
+5. เริ่มเก็บข้อมูลจากแบบฟอร์มและข้อความ LINE อย่างเป็นระบบ เพื่อใช้ train rule หรือ model สำหรับ auto-
+mapping ภายหลัง 
+
+=== PAGE 14 ===
+สมาชิกสะสมแต้ม LINE × Shopee × TikTok | System Design 
+เอกสารส าหรับการวางแผนพัฒนาระบบภายในองค์กร | 16 มีนาคม 2026 
+8. ข้อควบคุมด้านความปลอดภัยและความถูกต้องของข้อมูล 
+• เข้ารหัส token และ secret ของ platform ทุกตัว และแยก environment (DEV / UAT / PROD) 
+• บันทึก audit log ทุกครั้งที่มีการอนุมัติ mapping, ปรับแต้ม, ยกเลิก code หรือแก้ไข reward 
+• ใช้ idempotency สำหรับ webhook และ point transaction 
+• ห้ามใช้การเดาชื่อผู้ซื้อหรือเบอร์โทรเพียงอย่างเดียวในการ auto-approve mapping 
+• กำหนดสิทธิ์แยก role เช่น Mapping Admin, Point Admin, Support, Super Admin 
+• เก็บ raw payload ของ order / webhook / form submission 
+เท่าที่จำเป็นตามนโยบายข้อมูลส่วนบุคคลขององค์กร 
+9. ข้อเสนอแนะสรุป 
+แนวทางที่เหมาะสมที่สุดสำหรับการเริ่มต้นโครงการนี้ คือเริ่มด้วย manual mapping โดย admin 
+และออกแบบฐานข้อมูลให้รองรับคำขอ mapping จากหลายแหล่งตั้งแต่วันแรก ได้แก่ admin, member form และ 
+LINE message parsing เพื่อให้ในอนาคตสามารถยกระดับเป็น assisted automation และ controlled auto-
+mapping ได้โดยไม่ต้องรื้อโครงสร้างหลักของระบบใหม่ 
+หัวใจของระบบอยู่ที่ 4 ส่วน ได้แก่ (1) ตาราง mapping ที่ตรวจสอบย้อนกลับได้, (2) order integration 
+ที่มีสถานะและหลักฐานครบ, (3) point ledger ที่ป้องกันการลงซ้ำและย้อนรายการได้, และ (4) backoffice 
+สำหรับให้ admin ตรวจอนุมัติและติดตามข้อผิดพลาดได้สะดวก 
+Deliverable ถัดไปที่แนะนำหลังเอกสารฉบับนี้ 
+ERD รายละเอียด 
+• SQL Server / PostgreSQL Create Table 
+• API Contract แบบ Request/Response 
+• UI Wireframe สำหรับ LIFF และ Admin 
+• Sequence Diagram ของ Register / Mapping / Earn / Burn 
+ 
+

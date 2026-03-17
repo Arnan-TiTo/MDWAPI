@@ -1,4 +1,4 @@
-﻿using MDWAPI.Auth;
+using MDWAPI.Auth;
 using MDWAPI.Data;
 using MDWAPI.Entities;
 using MDWAPI.Helpers;
@@ -77,11 +77,25 @@ builder.Services.AddScoped<IIngestionAuditService, IngestionAuditService>();
 // Auth token provider (internal - for cronjob)
 builder.Services.AddSingleton<IAuthTokenProvider, InternalAuthTokenProvider>();
 
-// Background job
+// ===== MEMBER LOYALTY SERVICES =====
+builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<MemberService>();
+builder.Services.AddScoped<MemberMappingService>();
+builder.Services.AddScoped<PointPolicyEngine>();
+builder.Services.AddScoped<PointService>();
+builder.Services.AddScoped<RewardService>();
+builder.Services.AddScoped<EarnProcessingService>();
+builder.Services.AddScoped<LineNotificationService>();
+builder.Services.AddHttpClient<LineLoginService>();
+builder.Services.AddHttpClient<LineWebhookService>();
+
+// Background jobs
 if (!builder.Environment.IsDevelopment())
 {
     builder.Services.AddHostedService<MarketJobHostedService>();
 }
+builder.Services.AddHostedService<EarnJobService>();
+builder.Services.AddHostedService<OutboxProcessorService>();
 
 // ===== HTTP CLIENTS =====
 builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds(30); });
@@ -190,10 +204,23 @@ if (builder.Configuration.GetValue<bool>("SwaggerEnabled"))
 
 builder.Services.AddCors(options =>
 {
+    options.AddDefaultPolicy(p => p
+        .WithOrigins("https://vibeandchic.com",
+                     "https://www.vibeandchic.com",
+                     "https://madewe.vibeandchic.com",
+                     "https://adwportal.vibeandchic.com",
+                     "https://localhost:5254",
+                     "http://localhost:5030",
+                     "https://localhost:7156",
+                     "https://liff.line.me")
+        .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
+        .AllowAnyHeader()
+    );
     options.AddPolicy("CallbackCors", p => p
         .WithOrigins("https://vibeandchic.com",
                      "https://adwportal.vibeanchic.com",
-                     "https://localhost:5254")
+                     "https://localhost:5254",
+                     "https://liff.line.me")
         .WithMethods("POST", "GET", "PUT", "DELETE", "OPTIONS")
         .AllowAnyHeader()
     );
@@ -245,6 +272,11 @@ app.MapHealthChecks("/health");
 
 app.UseHttpsRedirection();
 app.UseCors();
+
+// Static files for LIFF Mini App
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
