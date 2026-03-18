@@ -112,19 +112,31 @@ public class MarketplaceOrderActionsController : ControllerBase
         [FromQuery] long shopId,
         [FromQuery] long? timeFrom = null,
         [FromQuery] long? timeTo = null,
+        [FromQuery] string? orderRef = null,
+        [FromQuery] string? status = null,
         CancellationToken ct = default)
     {
-        // default: last 30 days
-        var now = DateTimeOffset.UtcNow;
-        var from = timeFrom ?? now.AddDays(-30).ToUnixTimeSeconds();
-        var to = timeTo ?? now.ToUnixTimeSeconds();
-
         await RefreshTokenIfNeededAsync(platform.ToString(), shopId, ct);
 
         switch (platform)
         {
             case Platform.Shopee:
-                var result = await _returnSync.SyncShopeeReturnsAsync(shopId, from, to, ct);
+                SyncReturnResult result;
+
+                if (!string.IsNullOrWhiteSpace(orderRef))
+                {
+                    // by-ref: ดึง return เฉพาะ order ที่ระบุ
+                    result = await _returnSync.SyncShopeeReturnByOrderAsync(shopId, orderRef, status, ct);
+                }
+                else
+                {
+                    // by-list: ดึง return ทั้งหมดตาม time range (default 15 วัน per Shopee limit)
+                    var now = DateTimeOffset.UtcNow;
+                    var from = timeFrom ?? now.AddDays(-15).ToUnixTimeSeconds();
+                    var to = timeTo ?? now.ToUnixTimeSeconds();
+                    result = await _returnSync.SyncShopeeReturnsAsync(shopId, from, to, status, ct);
+                }
+
                 return Ok(new
                 {
                     message = $"Sync completed: {result.Processed} processed, {result.Failed} failed out of {result.TotalFound} found.",

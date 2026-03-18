@@ -155,6 +155,7 @@ public class ShopeeOrderService
     /// <summary>
     /// GET /api/v2/returns/get_return_list
     /// ดึงรายการ return/refund ตาม create_time range
+    /// status (optional): REQUESTED, ACCEPTED, CANCELLED, JUDGING, PROCESSING, SELLER_DISPUTE, REFUND_PAID, CLOSED
     /// </summary>
     public async Task<string> GetReturnListRawAsync(
         long shopId,
@@ -162,6 +163,7 @@ public class ShopeeOrderService
         long createTimeTo,
         int pageNo = 1,
         int pageSize = 50,
+        string? status = null,
         CancellationToken ct = default)
     {
         var query = new Dictionary<string, string?>
@@ -171,6 +173,9 @@ public class ShopeeOrderService
             ["page_no"] = pageNo.ToString(),
             ["page_size"] = pageSize.ToString()
         };
+
+        if (!string.IsNullOrWhiteSpace(status))
+            query["status"] = status;
 
         var (url, http) = await BuildSignedGetAsync(
             apiPath: ShopeeApiPaths.ReturnsGetList,

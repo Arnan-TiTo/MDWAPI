@@ -27,32 +27,66 @@ public class ReturnRefundSyncService
         _log = log;
     }
 
+    // สถานะที่ถือว่า "จบแล้ว" — ไม่ต้อง re-process อีก
+    private static readonly HashSet<string> TerminalStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CLOSED", "REFUND_PAID", "CANCELLED"
+    };
+
     /// <summary>
     /// Sync returns from Shopee for a given shop and time range.
-    /// Returns count of returns processed.
+    /// Shopee API: max 15-day window per call → auto-chunk.
+    /// page_no starts at 0 (per Shopee doc).
     /// </summary>
     public async Task<SyncReturnResult> SyncShopeeReturnsAsync(
-        long shopId, long timeFrom, long timeTo, CancellationToken ct = default)
+        long shopId, long timeFrom, long timeTo, string? status = null, CancellationToken ct = default)
     {
         var result = new SyncReturnResult();
-        int pageNo = 1;
+        const long MaxWindowSec = 15 * 24 * 3600; // 15 days in seconds
+
+        // chunk time range into 15-day windows
+        long windowFrom = timeFrom;
+        while (windowFrom < timeTo)
+        {
+            long windowTo = Math.Min(windowFrom + MaxWindowSec, timeTo);
+
+            _log.LogInformation(
+                "SyncShopeeReturns: shop={ShopId} window={From}~{To}",
+                shopId, windowFrom, windowTo);
+
+            await FetchReturnWindowAsync(shopId, windowFrom, windowTo, status, result, ct);
+
+            windowFrom = windowTo; // move to next window
+        }
+
+        _log.LogInformation(
+            "SyncShopeeReturns done: shop={ShopId} found={Found} processed={Processed} failed={Failed} skipped={Skipped}",
+            shopId, result.TotalFound, result.Processed, result.Failed, result.Skipped);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Fetch one 15-day window of returns (handles pagination).
+    /// </summary>
+    private async Task FetchReturnWindowAsync(
+        long shopId, long timeFrom, long timeTo, string? status,
+        SyncReturnResult result, CancellationToken ct)
+    {
+        int pageNo = 0; // Shopee doc: page_no starts at 0
         bool hasMore = true;
 
         while (hasMore)
         {
-            _log.LogInformation(
-                "Fetching Shopee return list: shop={ShopId} page={Page} from={From} to={To}",
-                shopId, pageNo, timeFrom, timeTo);
-
             string listJson;
             try
             {
                 listJson = await _shopeeOrder.GetReturnListRawAsync(
-                    shopId, timeFrom, timeTo, pageNo, 50, ct);
+                    shopId, timeFrom, timeTo, pageNo, 50, status, ct);
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, "get_return_list failed for shop={ShopId} page={Page}", shopId, pageNo);
+                _log.LogError(ex, "get_return_list failed: shop={ShopId} page={Page}", shopId, pageNo);
                 result.Errors.Add($"get_return_list page {pageNo}: {ex.Message}");
                 break;
             }
@@ -65,9 +99,10 @@ public class ReturnRefundSyncService
                 && errEl.ValueKind == JsonValueKind.String
                 && !string.IsNullOrWhiteSpace(errEl.GetString()))
             {
-                var msg = root.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : errEl.GetString();
-                _log.LogWarning("Shopee get_return_list error: {Error}", msg);
-                result.Errors.Add($"API error: {msg}");
+                var errCode = errEl.GetString();
+                var msg = root.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : errCode;
+                _log.LogWarning("Shopee get_return_list error: code={Code} msg={Msg}", errCode, msg);
+                result.Errors.Add($"API error: [{errCode}] {msg}");
                 break;
             }
 
@@ -106,6 +141,22 @@ public class ReturnRefundSyncService
                     continue;
                 }
 
+                // ถ้า return นี้มีใน DB แล้ว และ status เป็น terminal → skip
+                var existingReturn = await _db.UnifiedReturns
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.Channel == "Shopee"
+                                           && r.ExternalReturnId == returnSn.ToString()
+                                           && r.ShopId == shopId, ct);
+                if (existingReturn != null
+                    && !string.IsNullOrWhiteSpace(existingReturn.ReturnStatus)
+                    && TerminalStatuses.Contains(existingReturn.ReturnStatus))
+                {
+                    _log.LogDebug("Skip return {ReturnSn}: already {Status}",
+                        returnSn, existingReturn.ReturnStatus);
+                    result.Skipped++;
+                    continue;
+                }
+
                 try
                 {
                     await ProcessSingleReturnAsync(shopId, returnSn, orderSn, ct);
@@ -129,12 +180,169 @@ public class ReturnRefundSyncService
 
             if (pageNo > 100) break; // safety limit
         }
+    }
 
-        _log.LogInformation(
-            "SyncShopeeReturns done: shop={ShopId} found={Found} processed={Processed} failed={Failed}",
-            shopId, result.TotalFound, result.Processed, result.Failed);
+    /// <summary>
+    /// Sync returns for a specific order (by order_sn).
+    /// Searches get_return_list (last 90 days) filtering by order_sn.
+    /// Also re-fetches order detail to update UnifiedOrders.
+    /// </summary>
+    public async Task<SyncReturnResult> SyncShopeeReturnByOrderAsync(
+        long shopId, string orderSn, string? status = null, CancellationToken ct = default)
+    {
+        var result = new SyncReturnResult();
+
+        _log.LogInformation("SyncShopeeReturnByOrder: shop={ShopId} order={OrderSn}", shopId, orderSn);
+
+        // 1. Re-fetch order detail → update UnifiedOrders (status, refundAmount)
+        try
+        {
+            var orderDetailJson = await _shopeeOrder.GetOrderDetailRawAsync(shopId, orderSn, ct);
+            var nativeOrder = ExtractNativeOrder(orderDetailJson);
+            if (nativeOrder != null)
+            {
+                await _writer.UpsertFromShopeeRawAsync(shopId, null, nativeOrder, null, ct);
+                _log.LogInformation("Re-fetched order {OrderSn} before return scan", orderSn);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to re-fetch order {OrderSn}", orderSn);
+            result.Errors.Add($"re-fetch order: {ex.Message}");
+        }
+
+        // 2. Search returns: scan last 90 days in 15-day windows to find returns for this order
+        var now = DateTimeOffset.UtcNow;
+        var scanFrom = now.AddDays(-90).ToUnixTimeSeconds();
+        var scanTo = now.ToUnixTimeSeconds();
+        const long MaxWindowSec = 15 * 24 * 3600;
+        bool foundAny = false;
+
+        long windowFrom = scanFrom;
+        while (windowFrom < scanTo && !foundAny)
+        {
+            long windowTo = Math.Min(windowFrom + MaxWindowSec, scanTo);
+            int pageNo = 0; // Shopee doc: page_no starts at 0
+            bool hasMore = true;
+
+            while (hasMore)
+            {
+                string listJson;
+                try
+                {
+                    listJson = await _shopeeOrder.GetReturnListRawAsync(shopId, windowFrom, windowTo, pageNo, 50, status, ct);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "get_return_list failed while searching for order={OrderSn}", orderSn);
+                    result.Errors.Add($"get_return_list: {ex.Message}");
+                    hasMore = false;
+                    break;
+                }
+
+                using var listDoc = JsonDocument.Parse(listJson);
+                var root = listDoc.RootElement;
+
+                if (root.TryGetProperty("error", out var errEl)
+                    && errEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(errEl.GetString()))
+                {
+                    var msg = root.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : errEl.GetString();
+                    result.Errors.Add($"API error: {msg}");
+                    hasMore = false;
+                    break;
+                }
+
+                if (!root.TryGetProperty("response", out var resp)) break;
+                if (!resp.TryGetProperty("return_list", out var returnList)
+                    || returnList.ValueKind != JsonValueKind.Array) break;
+
+                var returns = returnList.EnumerateArray().ToList();
+                if (returns.Count == 0) break;
+
+                result.TotalFound += returns.Count;
+
+                // filter by order_sn
+                foreach (var retItem in returns)
+                {
+                    string? retOrderSn = null;
+                    if (retItem.TryGetProperty("order_sn", out var osnEl))
+                        retOrderSn = osnEl.GetString();
+
+                    if (!string.Equals(retOrderSn, orderSn, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    foundAny = true;
+                    long returnSn = 0;
+                    if (retItem.TryGetProperty("return_sn", out var rsnEl))
+                        returnSn = rsnEl.GetInt64();
+
+                    if (returnSn == 0) { result.Skipped++; continue; }
+
+                    // ถ้า return นี้มีใน DB แล้ว และ status เป็น terminal → skip
+                    var existingReturn = await _db.UnifiedReturns
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(r => r.Channel == "Shopee"
+                                               && r.ExternalReturnId == returnSn.ToString()
+                                               && r.ShopId == shopId, ct);
+                    if (existingReturn != null
+                        && !string.IsNullOrWhiteSpace(existingReturn.ReturnStatus)
+                        && TerminalStatuses.Contains(existingReturn.ReturnStatus))
+                    {
+                        _log.LogDebug("Skip return {ReturnSn}: already {Status}",
+                            returnSn, existingReturn.ReturnStatus);
+                        result.Skipped++;
+                        continue;
+                    }
+
+                    try
+                    {
+                        await ProcessSingleReturnAsync(shopId, returnSn, orderSn, ct);
+                        result.Processed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogError(ex, "Failed to process return {ReturnSn} for order {OrderSn}", returnSn, orderSn);
+                        result.Failed++;
+                        result.Errors.Add($"return_sn={returnSn}: {ex.Message}");
+                    }
+
+                    await Task.Delay(300, ct);
+                }
+
+                hasMore = resp.TryGetProperty("more", out var moreEl)
+                          && moreEl.ValueKind == JsonValueKind.True;
+                pageNo++;
+                if (pageNo > 100) break;
+            }
+
+            windowFrom = windowTo; // next 15-day window
+        }
+
+        if (!foundAny)
+        {
+            _log.LogInformation("No returns found for order {OrderSn} in last 90 days", orderSn);
+            result.Errors.Add($"No returns found for order {orderSn} in last 90 days (order detail was still updated)");
+        }
 
         return result;
+    }
+
+    /// <summary>
+    /// Extract native Shopee order JSON from API response wrapper
+    /// </summary>
+    private static string? ExtractNativeOrder(string apiResponse)
+    {
+        using var doc = JsonDocument.Parse(apiResponse);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("response", out var resp)
+            && resp.TryGetProperty("order_list", out var arr)
+            && arr.ValueKind == JsonValueKind.Array
+            && arr.GetArrayLength() > 0)
+            return arr[0].GetRawText();
+        if (root.TryGetProperty("order_sn", out _))
+            return apiResponse;
+        return null;
     }
 
     /// <summary>
