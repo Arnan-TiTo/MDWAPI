@@ -1,4 +1,4 @@
-﻿using MDWAPI.Helpers;
+using MDWAPI.Helpers;
 using MDWAPI.Repos;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -146,6 +146,74 @@ public class ShopeeOrderService
         {
             _log.LogWarning("Shopee get_order_list failed: {Status} {Body}", res.StatusCode, body);
             throw new HttpRequestException($"Shopee get_order_list failed: {(int)res.StatusCode}");
+        }
+        return body;
+    }
+
+    // ====== Returns / Refund ======
+
+    /// <summary>
+    /// GET /api/v2/returns/get_return_list
+    /// ดึงรายการ return/refund ตาม create_time range
+    /// </summary>
+    public async Task<string> GetReturnListRawAsync(
+        long shopId,
+        long createTimeFrom,
+        long createTimeTo,
+        int pageNo = 1,
+        int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        var query = new Dictionary<string, string?>
+        {
+            ["create_time_from"] = createTimeFrom.ToString(),
+            ["create_time_to"] = createTimeTo.ToString(),
+            ["page_no"] = pageNo.ToString(),
+            ["page_size"] = pageSize.ToString()
+        };
+
+        var (url, http) = await BuildSignedGetAsync(
+            apiPath: ShopeeApiPaths.ReturnsGetList,
+            shopId: shopId,
+            extraQuery: query,
+            ct: ct);
+
+        var res = await http.GetAsync(url, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee get_return_list failed: {Status} {Body}", res.StatusCode, body);
+            throw new HttpRequestException($"Shopee get_return_list failed: {(int)res.StatusCode}");
+        }
+        return body;
+    }
+
+    /// <summary>
+    /// GET /api/v2/returns/get_return_detail
+    /// ดึงรายละเอียด return 1 รายการ
+    /// </summary>
+    public async Task<string> GetReturnDetailRawAsync(
+        long shopId,
+        long returnSn,
+        CancellationToken ct = default)
+    {
+        var query = new Dictionary<string, string?>
+        {
+            ["return_sn"] = returnSn.ToString()
+        };
+
+        var (url, http) = await BuildSignedGetAsync(
+            apiPath: ShopeeApiPaths.ReturnsGetDetail,
+            shopId: shopId,
+            extraQuery: query,
+            ct: ct);
+
+        var res = await http.GetAsync(url, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee get_return_detail failed: {Status} {Body}", res.StatusCode, body);
+            throw new HttpRequestException($"Shopee get_return_detail failed: {(int)res.StatusCode}");
         }
         return body;
     }

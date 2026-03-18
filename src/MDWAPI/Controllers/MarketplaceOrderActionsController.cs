@@ -30,6 +30,7 @@ public class MarketplaceOrderActionsController : ControllerBase
     private readonly IPartnerRepo _partnerRepo;
     private readonly IChannelTokenRepo _chanRepo;
     private readonly IMemoryCache _cache;
+    private readonly ReturnRefundSyncService _returnSync;
     private readonly ILogger<MarketplaceOrderActionsController> _log;
     private readonly string _labelBasePath;
     private readonly bool _useMockOnFailure;
@@ -45,6 +46,7 @@ public class MarketplaceOrderActionsController : ControllerBase
         IPartnerRepo partnerRepo,
         IChannelTokenRepo chanRepo,
         IMemoryCache cache,
+        ReturnRefundSyncService returnSync,
         IConfiguration config,
         ILogger<MarketplaceOrderActionsController> log)
     {
@@ -58,6 +60,7 @@ public class MarketplaceOrderActionsController : ControllerBase
         _partnerRepo = partnerRepo;
         _chanRepo = chanRepo;
         _cache = cache;
+        _returnSync = returnSync;
         _log = log;
         _labelBasePath = config["LabelStorage:BasePath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "Labels");
         _useMockOnFailure = string.Equals(config["LabelStorage:UseMockOnFailure"], "true", StringComparison.OrdinalIgnoreCase);
@@ -97,7 +100,93 @@ public class MarketplaceOrderActionsController : ControllerBase
         string Note
     );
 
-    // ====== 0) Batch Process — สำหรับ cron job ======
+    // ====== 0) Sync Returns/Refunds ======
+
+    /// <summary>
+    /// POST /api/market/orders/actions/sync-returns
+    /// ดึงข้อมูล return/refund จาก platform มาบันทึกใน UnifiedReturns + อัปเดต UnifiedOrders
+    /// </summary>
+    [HttpPost("sync-returns")]
+    public async Task<IActionResult> SyncReturns(
+        [FromQuery] Platform platform,
+        [FromQuery] long shopId,
+        [FromQuery] long? timeFrom = null,
+        [FromQuery] long? timeTo = null,
+        CancellationToken ct = default)
+    {
+        // default: last 30 days
+        var now = DateTimeOffset.UtcNow;
+        var from = timeFrom ?? now.AddDays(-30).ToUnixTimeSeconds();
+        var to = timeTo ?? now.ToUnixTimeSeconds();
+
+        await RefreshTokenIfNeededAsync(platform.ToString(), shopId, ct);
+
+        switch (platform)
+        {
+            case Platform.Shopee:
+                var result = await _returnSync.SyncShopeeReturnsAsync(shopId, from, to, ct);
+                return Ok(new
+                {
+                    message = $"Sync completed: {result.Processed} processed, {result.Failed} failed out of {result.TotalFound} found.",
+                    result
+                });
+            default:
+                return BadRequest(new { message = $"Platform {platform} return sync not yet supported." });
+        }
+    }
+
+    /// <summary>
+    /// GET /api/market/orders/actions/returns
+    /// ดึงรายการ return/refund จาก DB
+    /// </summary>
+    [HttpGet("returns")]
+    public async Task<IActionResult> GetReturns(
+        [FromQuery] Platform? platform = null,
+        [FromQuery] long? shopId = null,
+        [FromQuery] string? orderRef = null,
+        [FromQuery] string? status = null,
+        [FromQuery] int take = 50,
+        CancellationToken ct = default)
+    {
+        var q = _db.UnifiedReturns.AsNoTracking().AsQueryable();
+
+        if (platform.HasValue)
+            q = q.Where(r => r.Channel == platform.Value.ToString());
+        if (shopId.HasValue)
+            q = q.Where(r => r.ShopId == shopId.Value);
+        if (!string.IsNullOrWhiteSpace(orderRef))
+            q = q.Where(r => r.ExternalOrderId == orderRef);
+        if (!string.IsNullOrWhiteSpace(status))
+            q = q.Where(r => r.ReturnStatus == status);
+
+        var items = await q
+            .OrderByDescending(r => r.CreatedAtUtc)
+            .Take(take)
+            .Select(r => new
+            {
+                r.UnifiedReturnId,
+                r.UnifiedOrderId,
+                r.Channel,
+                r.ShopId,
+                r.ExternalOrderId,
+                r.ExternalReturnId,
+                r.ReturnStatus,
+                r.ReturnReason,
+                r.TextReason,
+                r.ReturnType,
+                r.ReturnSolution,
+                r.RefundAmount,
+                r.Currency,
+                r.CreatedAtUtc,
+                r.UpdatedAtUtc,
+                r.IngestedAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(new { count = items.Count, items });
+    }
+
+    // ====== 0.5) Batch Process — สำหรับ cron job ======
 
     [HttpPost("process-shipment-batch")]
     public async Task<IActionResult> ProcessShipmentBatch(

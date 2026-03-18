@@ -86,6 +86,7 @@ builder.Services.AddScoped<PointService>();
 builder.Services.AddScoped<RewardService>();
 builder.Services.AddScoped<EarnProcessingService>();
 builder.Services.AddScoped<LineNotificationService>();
+builder.Services.AddScoped<ReturnRefundSyncService>();
 builder.Services.AddHttpClient<LineLoginService>();
 builder.Services.AddHttpClient<LineWebhookService>();
 

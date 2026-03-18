@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<UnifiedOrderAddresses> UnifiedOrderAddresses => Set<UnifiedOrderAddresses>();
     public DbSet<VUnifiedOrder> VUnifiedOrders => Set<VUnifiedOrder>();
     public DbSet<UnifiedOrderLabel> UnifiedOrderLabels => Set<UnifiedOrderLabel>();
+    public DbSet<UnifiedReturns> UnifiedReturns => Set<UnifiedReturns>();
 
     // --views ADW-- 
     public DbSet<VwOrderMerged> VwOrderMerged { get; set; } = default!;
