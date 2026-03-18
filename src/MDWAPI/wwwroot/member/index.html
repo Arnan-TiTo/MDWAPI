@@ -332,6 +332,9 @@
                     <div class="mb-stat-item"><div class="val" id="mbTotalBurned">0</div><div class="lbl">ใช้ไปแล้ว</div></div>
                     <div class="mb-stat-item"><div class="val" id="mbReservedPoints">0</div><div class="lbl">จองอยู่</div></div>
                 </div>
+                <div id="mbExpiryWarning" style="display:none; margin-top:12px; padding:10px 14px; background:rgba(243,156,18,0.08); border:1px solid rgba(243,156,18,0.2); border-radius:10px; font-size:13px; color:#e67e22;">
+                    ⏰ <span id="mbExpiringPoints">0</span> แต้มจะหมดอายุ <span id="mbNextExpiryDate"></span>
+                </div>
             </div>
 
             <div class="mb-tabs">
@@ -525,6 +528,20 @@
         document.getElementById('mbTotalEarned').textContent = (pb.totalEarned || 0).toLocaleString();
         document.getElementById('mbTotalBurned').textContent = (pb.totalBurned || 0).toLocaleString();
         document.getElementById('mbReservedPoints').textContent = (pb.reservedPoints || 0).toLocaleString();
+
+        // Expiry warning
+        if (pb.expiringPoints && pb.expiringPoints > 0) {
+            document.getElementById('mbExpiryWarning').style.display = 'block';
+            document.getElementById('mbExpiringPoints').textContent = pb.expiringPoints.toLocaleString();
+            if (pb.nextExpiryDate) {
+                const d = new Date(pb.nextExpiryDate);
+                const days = Math.max(0, Math.ceil((d - new Date()) / 86400000));
+                document.getElementById('mbNextExpiryDate').textContent = days > 0
+                    ? `ภายใน ${days} วัน` : 'วันนี้!';
+            }
+        } else {
+            document.getElementById('mbExpiryWarning').style.display = 'none';
+        }
     }
 
     async function mbLoadHistory() {
@@ -532,11 +549,11 @@
             const { data: items } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/points/history`);
             const container = document.getElementById('mbHistoryList');
             if (!items.length) { container.innerHTML = `<div class="mb-empty-state"><div class="icon">📋</div><p>ยังไม่มีประวัติ</p></div>`; return; }
-            container.innerHTML = items.map(item => {
+            container.innerHTML = items.filter(i => i.txnType !== 'EXPIRE_WARN').map(item => {
                 const isPositive = item.points > 0;
                 const iconClass = item.txnType === 'EARN' ? 'earn' : item.txnType === 'ADJUST' ? 'adjust' : 'burn';
-                const emoji = item.txnType === 'EARN' ? '✨' : item.txnType === 'BURN' ? '🎁' : item.txnType === 'ADJUST' ? '🔧' : '📦';
-                const typeName = { 'EARN': 'ได้รับแต้ม', 'BURN': 'แลกของรางวัล', 'RESERVE': 'จองแต้ม', 'RELEASE': 'คืนแต้ม', 'ADJUST': 'ปรับแต้ม', 'EXPIRE': 'แต้มหมดอายุ' }[item.txnType] || item.txnType;
+                const emoji = { 'EARN':'✨', 'BURN':'🎁', 'ADJUST':'🔧', 'EXPIRE':'⌛', 'EARN_REVERSAL':'↩️' }[item.txnType] || '📦';
+                const typeName = { 'EARN':'ได้รับแต้ม', 'BURN':'แลกของรางวัล', 'RESERVE':'จองแต้ม', 'RELEASE':'คืนแต้ม', 'ADJUST':'ปรับแต้ม', 'EXPIRE':'แต้มหมดอายุ', 'EARN_REVERSAL':'หักแต้มคืน (Return)' }[item.txnType] || item.txnType;
                 return `<div class="mb-history-item"><div class="mb-history-icon ${iconClass}">${emoji}</div><div class="mb-history-info"><div class="type">${typeName}</div><div class="date">${mbFormatDate(item.occurredAt)}</div></div><div class="mb-history-points ${isPositive ? 'positive' : 'negative'}">${isPositive ? '+' : ''}${item.points.toLocaleString()}</div></div>`;
             }).join('');
         } catch (err) { console.error('Load history error:', err); }

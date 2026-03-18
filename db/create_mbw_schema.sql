@@ -242,6 +242,7 @@ CREATE TABLE [mbw].[PointPolicies] (
     EffectiveFrom     DATETIME2      NOT NULL,
     EffectiveTo       DATETIME2      NULL,
     IsActive          BIT            NOT NULL DEFAULT 1,
+    ExpiryDays        INT            NULL,
     CreatedBy         NVARCHAR(100)  NULL,
     CreatedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
 

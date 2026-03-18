@@ -59,6 +59,32 @@ public class LineNotificationService
         await EnqueueAsync(memberId, "REDEMPTION", info.Value.userId, info.Value.companysId, message);
     }
 
+    /// <summary>แจ้งเตือนแต้มใกล้หมดอายุ</summary>
+    public async Task NotifyExpiryWarningAsync(long memberId, int expiringPoints, int daysLeft)
+    {
+        var info = await GetLineInfoAsync(memberId);
+        if (info == null) return;
+
+        var message = $"⏰ แจ้งเตือนแต้มใกล้หมดอายุ!\n"
+                    + $"แต้ม {expiringPoints:N0} แต้มจะหมดอายุในอีก {daysLeft} วัน\n"
+                    + $"ใช้แต้มแลกรางวัลก่อนหมดนะคะ 🎁";
+
+        await EnqueueAsync(memberId, "EXPIRY_WARNING", info.Value.userId, info.Value.companysId, message);
+    }
+
+    /// <summary>แจ้งเตือนแต้มหมดอายุแล้ว</summary>
+    public async Task NotifyExpiredAsync(long memberId, int expiredPoints, int remainingPoints)
+    {
+        var info = await GetLineInfoAsync(memberId);
+        if (info == null) return;
+
+        var message = $"⌛ แต้ม {expiredPoints:N0} แต้มหมดอายุแล้ว\n"
+                    + $"💰 แต้มคงเหลือ: {remainingPoints:N0} แต้ม\n"
+                    + $"สะสมแต้มเพิ่มจากการสั่งซื้อสินค้า ❤️";
+
+        await EnqueueAsync(memberId, "POINTS_EXPIRED", info.Value.userId, info.Value.companysId, message);
+    }
+
     /// <summary>แจ้งเตือนทั่วไป</summary>
     public async Task NotifyAsync(long memberId, string messageType, string message)
     {

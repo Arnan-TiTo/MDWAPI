@@ -96,6 +96,8 @@ if (!builder.Environment.IsDevelopment())
 }
 builder.Services.AddHostedService<EarnJobService>();
 builder.Services.AddHostedService<OutboxProcessorService>();
+builder.Services.AddScoped<PointExpiryProcessingService>();
+builder.Services.AddHostedService<PointExpiryJobService>();
 
 // ===== HTTP CLIENTS =====
 builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds(30); });

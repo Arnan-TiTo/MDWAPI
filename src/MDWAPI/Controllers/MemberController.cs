@@ -91,6 +91,14 @@ public class MemberController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>ดูแต้มที่จะหมดอายุ (batch list)</summary>
+    [HttpGet("{memberId:long}/points/expiring")]
+    public async Task<IActionResult> GetExpiringPoints(long memberId)
+    {
+        var result = await _pointService.GetExpiringPointsAsync(memberId);
+        return Ok(result);
+    }
+
     /// <summary>ดู rewards ที่แลกได้</summary>
     [HttpGet("rewards")]
     public async Task<IActionResult> ListRewards()

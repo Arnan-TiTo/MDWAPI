@@ -15,6 +15,7 @@ public class PointPolicy
     public decimal EarnRate { get; set; } = 1.0m;
     public decimal? MinOrderAmount { get; set; }
     [MaxLength(500)] public string? EligibleStatuses { get; set; } // JSON
+    public int? ExpiryDays { get; set; }    // NULL = ไม่หมดอายุ, 365 = หมดอายุ 365 วันหลัง earn
     public DateTime EffectiveFrom { get; set; }
     public DateTime? EffectiveTo { get; set; }
     public bool IsActive { get; set; } = true;

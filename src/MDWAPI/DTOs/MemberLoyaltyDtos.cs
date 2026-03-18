@@ -157,6 +157,16 @@ public class PointBalanceDto
     public int TotalBurned { get; set; }
     public int TotalExpired { get; set; }
     public DateTime? LastActivityAt { get; set; }
+    public int ExpiringPoints { get; set; }       // แต้มที่จะหมดอายุใน 30 วัน
+    public DateTime? NextExpiryDate { get; set; }  // วันหมดอายุใกล้สุด
+}
+
+public class PointExpirationDto
+{
+    public long ExpirationId { get; set; }
+    public int OriginalPoints { get; set; }
+    public int RemainingPoints { get; set; }
+    public DateTime ExpiresAt { get; set; }
 }
 
 public class PointHistoryDto

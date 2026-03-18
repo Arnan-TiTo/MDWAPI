@@ -335,6 +335,7 @@ public class PointPolicyCreateDto
     public decimal EarnRate { get; set; } = 1.0m;
     public decimal? MinOrderAmount { get; set; }
     public string? EligibleStatuses { get; set; }
+    public int? ExpiryDays { get; set; }
     public DateTime EffectiveFrom { get; set; }
     public DateTime? EffectiveTo { get; set; }
 }

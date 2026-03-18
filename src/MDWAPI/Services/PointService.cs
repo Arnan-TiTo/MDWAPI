@@ -188,6 +188,18 @@ public class PointService
         if (pa == null)
             return new PointBalanceDto();
 
+        // คำนวณแต้มที่จะหมดอายุใน 30 วัน
+        var expiringSoon = await _db.PointExpirations
+            .Where(e => e.MemberId == memberId && e.Status == "Active" && e.RemainingPoints > 0
+                && e.ExpiresAt <= DateTime.UtcNow.AddDays(30))
+            .SumAsync(e => e.RemainingPoints);
+
+        var nextExpiry = await _db.PointExpirations
+            .Where(e => e.MemberId == memberId && e.Status == "Active" && e.RemainingPoints > 0)
+            .OrderBy(e => e.ExpiresAt)
+            .Select(e => (DateTime?)e.ExpiresAt)
+            .FirstOrDefaultAsync();
+
         return new PointBalanceDto
         {
             AvailablePoints = pa.AvailablePoints,
@@ -195,7 +207,9 @@ public class PointService
             TotalEarned = pa.TotalEarned,
             TotalBurned = pa.TotalBurned,
             TotalExpired = pa.TotalExpired,
-            LastActivityAt = pa.LastActivityAt
+            LastActivityAt = pa.LastActivityAt,
+            ExpiringPoints = expiringSoon,
+            NextExpiryDate = nextExpiry
         };
     }
 
@@ -254,6 +268,26 @@ public class PointService
 
         _db.PointLedger.Add(entry);
         await _db.SaveChangesAsync();
+
+        // ─── Point Expiry: สร้าง PointExpiration ถ้า policy มี ExpiryDays ───
+        if (policyId.HasValue)
+        {
+            var policy = await _db.PointPolicies.FindAsync(policyId.Value);
+            if (policy?.ExpiryDays != null && policy.ExpiryDays > 0)
+            {
+                _db.PointExpirations.Add(new PointExpiration
+                {
+                    MemberId = memberId,
+                    SourceLedgerId = entry.LedgerId,
+                    OriginalPoints = points,
+                    RemainingPoints = points,
+                    ExpiresAt = DateTime.UtcNow.AddDays(policy.ExpiryDays.Value),
+                    Status = "Active"
+                });
+                await _db.SaveChangesAsync();
+            }
+        }
+
         return entry;
     }
 
@@ -261,22 +295,20 @@ public class PointService
     public async Task<PointLedgerEntry?> EarnReversalAsync(long memberId, string refId, string? createdBy = null)
     {
         var reversalKey = $"EARN_REVERSAL-ORDER-{refId}";
-        // ป้องกันหักซ้ำ
         if (await _db.PointLedger.AnyAsync(l => l.IdempotencyKey == reversalKey))
             return null;
 
-        // หา earn entry เดิม
         var earnKey = $"EARN-ORDER-{refId}";
         var originalEarn = await _db.PointLedger
             .FirstOrDefaultAsync(l => l.IdempotencyKey == earnKey && l.TxnType == "EARN");
 
-        if (originalEarn == null) return null; // ไม่เคย earn → ไม่ต้องหัก
+        if (originalEarn == null) return null;
 
-        var pointsToReverse = originalEarn.Points; // จำนวนที่เคย earn
+        var pointsToReverse = originalEarn.Points;
 
         var account = await GetOrCreateAccountAsync(memberId);
         account.AvailablePoints -= pointsToReverse;
-        account.TotalEarned -= pointsToReverse; // ลดยอดสะสม
+        account.TotalEarned -= pointsToReverse;
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
 
@@ -296,11 +328,21 @@ public class PointService
         };
 
         _db.PointLedger.Add(entry);
+
+        // ─── Point Expiry: ลบ expiration ของ earn ที่ถูก reverse ───
+        var expiration = await _db.PointExpirations
+            .FirstOrDefaultAsync(e => e.SourceLedgerId == originalEarn.LedgerId && e.Status == "Active");
+        if (expiration != null)
+        {
+            expiration.RemainingPoints = 0;
+            expiration.Status = "Reversed";
+        }
+
         await _db.SaveChangesAsync();
         return entry;
     }
 
-    /// <summary>Reserve points (ก่อน burn)</summary>
+    /// <summary>Reserve points (ก่อน burn) — ใช้แต้มที่ใกล้หมดอายุก่อน (FIFO)</summary>
     public async Task<PointLedgerEntry> ReserveAsync(long memberId, int points, string refId)
     {
         var account = await GetOrCreateAccountAsync(memberId);
@@ -311,6 +353,9 @@ public class PointService
         account.ReservedPoints += points;
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
+
+        // ─── FIFO: ตัดแต้มที่ใกล้หมดอายุก่อน ───
+        await ConsumeFifoAsync(memberId, points);
 
         var entry = new PointLedgerEntry
         {
@@ -359,7 +404,7 @@ public class PointService
         return entry;
     }
 
-    /// <summary>Release reserved points (cancel)</summary>
+    /// <summary>Release reserved points (cancel) — คืนแต้มกลับเข้า expiration (reverse FIFO)</summary>
     public async Task ReleaseAsync(long memberId, int points, string refId)
     {
         var account = await GetOrCreateAccountAsync(memberId);
@@ -367,6 +412,9 @@ public class PointService
         account.AvailablePoints += points;
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
+
+        // คืนแต้มกลับเข้า expiration (newest first — reverse FIFO)
+        await RestoreFifoAsync(memberId, points);
 
         _db.PointLedger.Add(new PointLedgerEntry
         {
@@ -443,6 +491,63 @@ public class PointService
         return account;
     }
 
+    // ═══ FIFO Point Expiry helpers ═══════════════════════
+
+    /// <summary>ตัดแต้มที่ใกล้หมดอายุก่อน (FIFO)</summary>
+    private async Task ConsumeFifoAsync(long memberId, int points)
+    {
+        var expirations = await _db.PointExpirations
+            .Where(e => e.MemberId == memberId && e.Status == "Active" && e.RemainingPoints > 0)
+            .OrderBy(e => e.ExpiresAt)
+            .ToListAsync();
+
+        int remaining = points;
+        foreach (var exp in expirations)
+        {
+            if (remaining <= 0) break;
+            int consume = Math.Min(remaining, exp.RemainingPoints);
+            exp.RemainingPoints -= consume;
+            remaining -= consume;
+        }
+    }
+
+    /// <summary>คืนแต้มกลับเข้า expiration (reverse FIFO — newest first)</summary>
+    private async Task RestoreFifoAsync(long memberId, int points)
+    {
+        // คืนแต้มกลับ: เริ่มจาก batch ที่หมดอายุช้าสุด (เพราะถูกตัดไปหลังสุด)
+        var expirations = await _db.PointExpirations
+            .Where(e => e.MemberId == memberId && e.Status == "Active"
+                && e.RemainingPoints < e.OriginalPoints) // ถูกตัดไปบ้างแล้ว
+            .OrderByDescending(e => e.ExpiresAt)
+            .ToListAsync();
+
+        int remaining = points;
+        foreach (var exp in expirations)
+        {
+            if (remaining <= 0) break;
+            int canRestore = exp.OriginalPoints - exp.RemainingPoints;
+            int restore = Math.Min(remaining, canRestore);
+            exp.RemainingPoints += restore;
+            remaining -= restore;
+        }
+    }
+
+    /// <summary>ดูแต้มที่จะหมดอายุเร็วๆ นี้</summary>
+    public async Task<List<PointExpirationDto>> GetExpiringPointsAsync(long memberId)
+    {
+        return await _db.PointExpirations
+            .Where(e => e.MemberId == memberId && e.Status == "Active" && e.RemainingPoints > 0)
+            .OrderBy(e => e.ExpiresAt)
+            .Select(e => new PointExpirationDto
+            {
+                ExpirationId = e.ExpirationId,
+                OriginalPoints = e.OriginalPoints,
+                RemainingPoints = e.RemainingPoints,
+                ExpiresAt = e.ExpiresAt
+            })
+            .ToListAsync();
+    }
+
     // ─── Policy CRUD ──────────────────────────────
     public async Task<List<PointPolicyDto>> ListPoliciesAsync()
     {
@@ -463,6 +568,7 @@ public class PointService
             EarnRate = dto.EarnRate,
             MinOrderAmount = dto.MinOrderAmount,
             EligibleStatuses = dto.EligibleStatuses,
+            ExpiryDays = dto.ExpiryDays,
             EffectiveFrom = dto.EffectiveFrom,
             EffectiveTo = dto.EffectiveTo,
             IsActive = true,
@@ -485,6 +591,7 @@ public class PointService
         policy.EarnRate = dto.EarnRate;
         policy.MinOrderAmount = dto.MinOrderAmount;
         policy.EligibleStatuses = dto.EligibleStatuses;
+        policy.ExpiryDays = dto.ExpiryDays;
         policy.EffectiveFrom = dto.EffectiveFrom;
         policy.EffectiveTo = dto.EffectiveTo;
         await _db.SaveChangesAsync();
@@ -509,6 +616,7 @@ public class PointService
         EarnRate = p.EarnRate,
         MinOrderAmount = p.MinOrderAmount,
         EligibleStatuses = p.EligibleStatuses,
+        ExpiryDays = p.ExpiryDays,
         EffectiveFrom = p.EffectiveFrom,
         EffectiveTo = p.EffectiveTo,
         IsActive = p.IsActive,
@@ -526,6 +634,7 @@ public class PointPolicyDto
     public decimal EarnRate { get; set; }
     public decimal? MinOrderAmount { get; set; }
     public string? EligibleStatuses { get; set; }
+    public int? ExpiryDays { get; set; }
     public DateTime EffectiveFrom { get; set; }
     public DateTime? EffectiveTo { get; set; }
     public bool IsActive { get; set; }
