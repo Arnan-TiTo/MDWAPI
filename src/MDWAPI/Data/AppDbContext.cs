@@ -62,6 +62,17 @@ public class AppDbContext : DbContext
     public DbSet<WebhookInboxEntry> WebhookInbox => Set<WebhookInboxEntry>();
     public DbSet<ApiCallLog> ApiCallLogs => Set<ApiCallLog>();
     public DbSet<LineOaConfig> LineOaConfigs => Set<LineOaConfig>();
+    public DbSet<MemberChannel> MemberChannels => Set<MemberChannel>();
+    public DbSet<RegistrationProductOption> RegistrationProductOptions => Set<RegistrationProductOption>();
+    public DbSet<MemberRegistrationAnswer> MemberRegistrationAnswers => Set<MemberRegistrationAnswer>();
+    public DbSet<ContentDocument> ContentDocuments => Set<ContentDocument>();
+    public DbSet<MemberConsentLog> MemberConsentLogs => Set<MemberConsentLog>();
+    public DbSet<TierMaster> TierMasters => Set<TierMaster>();
+    public DbSet<MemberTierHistory> MemberTierHistories => Set<MemberTierHistory>();
+    public DbSet<MemberNotification> MemberNotifications => Set<MemberNotification>();
+    public DbSet<RewardFulfillment> RewardFulfillments => Set<RewardFulfillment>();
+    public DbSet<RewardRedemptionHistory> RewardRedemptionHistories => Set<RewardRedemptionHistory>();
+    public DbSet<ThailandAddress> ThailandAddresses => Set<ThailandAddress>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -543,6 +554,104 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.LineOaConfigId);
             e.HasIndex(x => x.CompanysId);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 26. MemberChannels
+        modelBuilder.Entity<MemberChannel>(e =>
+        {
+            e.ToTable("MemberChannels", "mbw");
+            e.HasKey(x => x.ChannelId);
+            e.HasIndex(x => x.ChannelCode).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 27. RegistrationProductOptions
+        modelBuilder.Entity<RegistrationProductOption>(e =>
+        {
+            e.ToTable("RegistrationProductOptions", "mbw");
+            e.HasKey(x => x.OptionId);
+            e.HasIndex(x => x.OptionCode).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 28. MemberRegistrationAnswers
+        modelBuilder.Entity<MemberRegistrationAnswer>(e =>
+        {
+            e.ToTable("MemberRegistrationAnswers", "mbw");
+            e.HasKey(x => x.AnswerId);
+            e.HasIndex(x => new { x.MemberId, x.OptionId }).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 29. ContentDocuments
+        modelBuilder.Entity<ContentDocument>(e =>
+        {
+            e.ToTable("ContentDocuments", "mbw");
+            e.HasKey(x => x.DocumentId);
+            e.HasIndex(x => new { x.DocumentType, x.VersionNo, x.LanguageCode }).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 30. MemberConsentLogs
+        modelBuilder.Entity<MemberConsentLog>(e =>
+        {
+            e.ToTable("MemberConsentLogs", "mbw");
+            e.HasKey(x => x.ConsentLogId);
+            e.HasIndex(x => new { x.MemberId, x.AcceptedAt });
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 31. TierMasters
+        modelBuilder.Entity<TierMaster>(e =>
+        {
+            e.ToTable("TierMasters", "mbw");
+            e.HasKey(x => x.TierId);
+            e.HasIndex(x => x.TierCode).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 32. MemberTierHistories
+        modelBuilder.Entity<MemberTierHistory>(e =>
+        {
+            e.ToTable("MemberTierHistories", "mbw");
+            e.HasKey(x => x.MemberTierHistoryId);
+            e.HasIndex(x => new { x.MemberId, x.CalculatedAt });
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 33. MemberNotifications
+        modelBuilder.Entity<MemberNotification>(e =>
+        {
+            e.ToTable("MemberNotifications", "mbw");
+            e.HasKey(x => x.NotificationId);
+            e.HasIndex(x => new { x.MemberId, x.CreatedAt });
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 34. RewardFulfillments
+        modelBuilder.Entity<RewardFulfillment>(e =>
+        {
+            e.ToTable("RewardFulfillments", "mbw");
+            e.HasKey(x => x.FulfillmentId);
+            e.HasIndex(x => x.RedemptionId).IsUnique();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        // 35. RewardRedemptionHistories
+        modelBuilder.Entity<RewardRedemptionHistory>(e =>
+        {
+            e.ToTable("RewardRedemptionHistories", "mbw");
+            e.HasKey(x => x.RedemptionHistoryId);
+            e.HasIndex(x => new { x.RedemptionId, x.ChangedAt });
+        });
+
+        // 36. ThailandAddress
+        modelBuilder.Entity<ThailandAddress>(e =>
+        {
+            e.ToTable("ThailandAddress", "mbw");
+            e.HasKey(x => x.tambonID);
+            e.HasIndex(x => x.province);
+            e.HasIndex(x => x.district);
         });
     }
 

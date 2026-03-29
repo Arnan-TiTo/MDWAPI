@@ -7,6 +7,11 @@ public class MemberRegisterRequest
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public bool ConsentAccepted { get; set; }
+    public int? RegisterChannelId { get; set; }
+    public List<int>? ProductOptionIds { get; set; }
+    public string? OtherProductText { get; set; }
+    public string? PreferredLanguage { get; set; }
+    public string? PhoneCountryCode { get; set; }
 
     // LINE identity (ถ้าสมัครผ่าน LINE)
     public string? LineProviderType { get; set; }   // LINE_LOGIN / LINE_OA
@@ -17,13 +22,103 @@ public class MemberRegisterRequest
     public int? CompanysId { get; set; }
 }
 
+public class MemberImportDto
+{
+    public string? LineUserId { get; set; }
+    public string? MemberType { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public int? Age { get; set; }
+    public string? Gender { get; set; }
+    public string? Address { get; set; }
+    public string? Subdistrict { get; set; }
+    public string? District { get; set; }
+    public string? Province { get; set; }
+    public string? ZipCode { get; set; }
+    public string? MembershipTier { get; set; }
+    public string? Tags { get; set; }
+    public string? Branch { get; set; }
+    public decimal CurrentPoints { get; set; }
+    public decimal TotalPoints { get; set; }
+    public decimal PointsForTier { get; set; }
+    public int UsageCount { get; set; }
+    public DateTime? LastActiveAt { get; set; }
+    public int? LastActiveDays { get; set; }
+    public string? Status { get; set; }
+    public DateTime? RegisteredAt { get; set; }
+    public string? HowYouKnowMe { get; set; }
+
+    // Legacy support for basic Excel
+    public string? PictureUrl { get; set; }
+    public string? StatusMessage { get; set; }
+    public string? Language { get; set; }
+    public DateTime? AddedAt { get; set; }
+}
+
+public class BulkImportResultDto
+{
+    public int Total { get; set; }
+    public int Created { get; set; }
+    public int Updated { get; set; }
+    public int Failed { get; set; }
+    public List<string> Errors { get; set; } = new();
+}
+
+public class ImportValidationRowDto
+{
+    public int RowNumber { get; set; }
+    public string? Status { get; set; } // Ready, Duplicate, Invalid
+    public string? Message { get; set; }
+    public MemberImportDto Data { get; set; } = default!;
+}
+
+public class BulkImportValidateResultDto
+{
+    public string FileName { get; set; } = "";
+    public int TotalRows { get; set; }
+    public int ReadyCount { get; set; }
+    public int DuplicateCount { get; set; }
+    public int ErrorCount { get; set; }
+    public List<ImportValidationRowDto> Rows { get; set; } = new();
+}
+
 public class MemberProfileDto
 {
     public long MemberId { get; set; }
     public string MemberCode { get; set; } = default!;
     public string? DisplayName { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    public string? Gender { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public int? Age { get; set; }
+    
+    public string? Address { get; set; }
+    public string? Subdistrict { get; set; }
+    public string? District { get; set; }
+    public string? Province { get; set; }
+    public string? ZipCode { get; set; }
+
+    public string? MemberType { get; set; }
+    public int? CurrentTierId { get; set; }
+    public string? MembershipTier { get; set; }
+    public string? TierColor { get; set; }
+    public string? TierIconUrl { get; set; }
+    public string? Tags { get; set; }
+    public string? Branch { get; set; }
+    public decimal PointsForTier { get; set; }
+    public int UsageCount { get; set; }
+    public DateTime? LastActiveAt { get; set; }
+    public string? HowYouKnowMe { get; set; }
+    public string? PreferredLanguage { get; set; }
+    public string? PhoneCountryCode { get; set; }
+
     public string Status { get; set; } = default!;
     public DateTime RegisteredAt { get; set; }
     public List<MemberIdentityDto> Identities { get; set; } = new();
@@ -84,8 +179,18 @@ public class MemberSummaryWithStatsDto
 public class MemberUpdateProfileRequest
 {
     public string? DisplayName { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public string? Address { get; set; }
+    public string? Subdistrict { get; set; }
+    public string? District { get; set; }
+    public string? Province { get; set; }
+    public string? ZipCode { get; set; }
+    public string? Remark { get; set; }
+    public string? PreferredLanguage { get; set; }
 }
 
 public class MemberPlatformLinkRequest
@@ -152,6 +257,8 @@ public class MappingRequestDto
 public class PointBalanceDto
 {
     public int AvailablePoints { get; set; }
+    public int PendingPoints { get; set; }
+    public int TotalPoints => AvailablePoints + PendingPoints;
     public int ReservedPoints { get; set; }
     public int TotalEarned { get; set; }
     public int TotalBurned { get; set; }
@@ -214,8 +321,63 @@ public class RedeemRequestDto
 public class RedemptionResultDto
 {
     public long RedemptionId { get; set; }
+    public string RedemptionCode { get; set; } = default!;
     public string Status { get; set; } = default!;
     public int PointsSpent { get; set; }
     public string? Code { get; set; }
     public string? Message { get; set; }
+    public RedemptionFulfillmentDto? Fulfillment { get; set; }
+}
+
+public class RedemptionFulfillmentDto
+{
+    public string FulfillmentStatus { get; set; } = default!;
+    public string? CarrierName { get; set; }
+    public string? TrackingNo { get; set; }
+    public DateTime? ShippedAt { get; set; }
+}
+
+// ─── Masters & Content ────────────────────────────
+public class MemberChannelDto
+{
+    public int ChannelId { get; set; }
+    public string ChannelCode { get; set; } = default!;
+    public string ChannelName { get; set; } = default!;
+}
+
+public class RegistrationProductOptionDto
+{
+    public int OptionId { get; set; }
+    public string OptionCode { get; set; } = default!;
+    public string OptionName { get; set; } = default!;
+    public bool IsAllowOtherText { get; set; }
+}
+
+public class ContentDocumentDto
+{
+    public string DocumentType { get; set; } = default!;
+    public string VersionNo { get; set; } = default!;
+    public string Title { get; set; } = default!;
+    public string ContentHtml { get; set; } = default!;
+}
+
+public class TierDto
+{
+    public int TierId { get; set; }
+    public string TierCode { get; set; } = default!;
+    public string TierName { get; set; } = default!;
+    public decimal MinPoints { get; set; }
+    public string? TierColor { get; set; }
+    public string? IconUrl { get; set; }
+    public string? Description { get; set; }
+}
+
+public class MemberNotificationDto
+{
+    public long NotificationId { get; set; }
+    public string NotificationType { get; set; } = default!;
+    public string Title { get; set; } = default!;
+    public string Message { get; set; } = default!;
+    public bool IsRead { get; set; }
+    public DateTime CreatedAt { get; set; }
 }

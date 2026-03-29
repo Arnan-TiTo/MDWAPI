@@ -21,6 +21,22 @@ public class MemberController : ControllerBase
         _rewardService = rewardService;
     }
 
+    /// <summary>ดึงรายการช่องทางการสมัคร (Masters)</summary>
+    [HttpGet("master/channels")]
+    public async Task<IActionResult> GetChannels()
+    {
+        var result = await _memberService.GetChannelsAsync();
+        return Ok(result);
+    }
+
+    /// <summary>ดึงตัวเลือก "คุณรู้จักเราผ่านที่ไหน" (Masters)</summary>
+    [HttpGet("master/registration-options")]
+    public async Task<IActionResult> GetRegistrationOptions()
+    {
+        var result = await _memberService.GetRegistrationOptionsAsync();
+        return Ok(result);
+    }
+
     /// <summary>สมัครสมาชิก</summary>
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] MemberRegisterRequest req)

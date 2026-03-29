@@ -85,6 +85,20 @@ public class LineNotificationService
         await EnqueueAsync(memberId, "POINTS_EXPIRED", info.Value.userId, info.Value.companysId, message);
     }
 
+    /// <summary>แจ้งเตือนแต้มพร้อมใช้งาน (Maturation)</summary>
+    public async Task NotifyPointsAvailableAsync(long memberId, int availablePoints, int totalAvailable)
+    {
+        var info = await GetLineInfoAsync(memberId);
+        if (info == null) return;
+
+        var message = $"🆕 แต้มพร้อมใช้งานแล้ว!\n"
+                    + $"คุณได้รับ {availablePoints:N0} แต้มจากการสั่งซื้อก่อนหน้านี้\n"
+                    + $"💰 แต้มที่ใช้ได้ตอนนี้: {totalAvailable:N0} แต้ม\n"
+                    + $"ใช้แต้มแลกรับส่วนลดหรือรางวัลได้เลยค่ะ 🎁";
+
+        await EnqueueAsync(memberId, "POINTS_AVAILABLE", info.Value.userId, info.Value.companysId, message);
+    }
+
     /// <summary>แจ้งเตือนทั่วไป</summary>
     public async Task NotifyAsync(long memberId, string messageType, string message)
     {

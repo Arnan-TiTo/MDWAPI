@@ -14,9 +14,12 @@ using System.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// === Register Encoding ===
+System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
- //?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+//  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
@@ -24,6 +27,9 @@ builder.Services.AddDbContext<AppDbContext>(
     opt => opt.UseSqlServer(conn),
     contextLifetime: ServiceLifetime.Scoped,
     optionsLifetime: ServiceLifetime.Singleton);
+
+
+
 
 // ===== AUTH =====
 builder.Services
@@ -84,11 +90,15 @@ builder.Services.AddScoped<MemberMappingService>();
 builder.Services.AddScoped<PointPolicyEngine>();
 builder.Services.AddScoped<PointService>();
 builder.Services.AddScoped<RewardService>();
+builder.Services.AddScoped<ContentService>();
+builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<EarnProcessingService>();
 builder.Services.AddScoped<LineNotificationService>();
 builder.Services.AddScoped<ReturnRefundSyncService>();
 builder.Services.AddHttpClient<LineLoginService>();
 builder.Services.AddHttpClient<LineWebhookService>();
+builder.Services.AddScoped<ThailandAddressSeedService>();
+
 
 // Background jobs
 if (!builder.Environment.IsDevelopment())
@@ -99,6 +109,8 @@ builder.Services.AddHostedService<EarnJobService>();
 builder.Services.AddHostedService<OutboxProcessorService>();
 builder.Services.AddScoped<PointExpiryProcessingService>();
 builder.Services.AddHostedService<PointExpiryJobService>();
+builder.Services.AddScoped<PointMaturationProcessingService>();
+builder.Services.AddHostedService<PointMaturationJobService>();
 
 // ===== HTTP CLIENTS =====
 builder.Services.AddHttpClient("Shopee", c => { c.Timeout = TimeSpan.FromSeconds(30); });
@@ -215,6 +227,8 @@ builder.Services.AddCors(options =>
                      "https://localhost:5254",
                      "http://localhost:5030",
                      "https://localhost:7156",
+                     "http://localhost:5000",
+                     "https://localhost:5001",
                      "https://liff.line.me")
         .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
         .AllowAnyHeader()
@@ -252,7 +266,11 @@ using (var scope = app.Services.CreateScope())
         });
         db.SaveChanges();
     }
+
+    var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
+    addressSeed.SeedAsync().Wait();
 }
+
 
 if (app.Environment.IsDevelopment())
 {

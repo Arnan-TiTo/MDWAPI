@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using ClosedXML.Excel;
 
 namespace MDWAPI.Controllers;
 
@@ -76,6 +77,93 @@ public class AdminMemberController : ControllerBase
     {
         var (linked, earned) = await _earnProcessor.ProcessPendingOrdersAsync();
         return Ok(new { linked, earned, message = $"จับคู่ {linked} ออเดอร์, คำนวณแต้ม {earned} รายการ" });
+    }
+
+    /// <summary>Admin สร้างสมาชิกใหม่</summary>
+    [HttpPost("register")]
+    public async Task<IActionResult> AdminCreateMember([FromBody] AdminMemberCreateDto dto)
+    {
+        try
+        {
+            var req = new MemberRegisterRequest
+            {
+                DisplayName = dto.DisplayName,
+                Phone = dto.Phone,
+                Email = dto.Email,
+                ConsentAccepted = true,
+                CompanysId = dto.CompanysId,
+                LineUserId = dto.LineUserId,
+                LineProviderType = string.IsNullOrWhiteSpace(dto.LineUserId) ? null : "LINE_OA"
+            };
+            var result = await _memberService.RegisterAsync(req);
+            return Ok(result);
+        }
+        catch (Exception ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Admin แก้ไขข้อมูลสมาชิก</summary>
+    [HttpPut("{memberId:long}")]
+    public async Task<IActionResult> AdminUpdateMember(long memberId, [FromBody] AdminMemberUpdateDto dto)
+    {
+        try
+        {
+            var req = new MemberUpdateProfileRequest
+            {
+                DisplayName = dto.DisplayName,
+                Phone = dto.Phone,
+                Email = dto.Email
+            };
+            var result = await _memberService.UpdateProfileAsync(memberId, req);
+
+            if (!string.IsNullOrWhiteSpace(dto.Status))
+                await _memberService.SetStatusAsync(memberId, dto.Status);
+
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
+        catch (Exception ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Admin ลบ/ปิดการใช้งานสมาชิก (soft delete)</summary>
+    [HttpDelete("{memberId:long}")]
+    public async Task<IActionResult> AdminDeleteMember(long memberId)
+    {
+        try
+        {
+            await _memberService.SetStatusAsync(memberId, "Inactive");
+            return Ok(new { message = "Member deactivated" });
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
+    }
+
+    /// <summary>Step 1: Validate import file (Excel or CSV) and return preview</summary>
+    [HttpPost("bulk-import/validate")]
+    public async Task<IActionResult> BulkImportValidate(IFormFile file, [FromQuery] int? companysId)
+    {
+        if (file == null || file.Length == 0) return BadRequest("No file uploaded.");
+        using var stream = file.OpenReadStream();
+        var result = await _memberService.AnalyzeImportAsync(stream, file.FileName, companysId);
+        return Ok(result);
+    }
+
+    /// <summary>Step 2: Confirm and execute the import after validation</summary>
+    [HttpPost("bulk-import/confirm")]
+    public async Task<IActionResult> BulkImportConfirm([FromBody] List<MemberImportDto> dtos, [FromQuery] int? companysId)
+    {
+        if (dtos == null || !dtos.Any()) return BadRequest("No member data provided");
+        var result = await _memberService.BulkImportAsync(dtos, companysId);
+        return Ok(result);
+    }
+
+    /// <summary>Bulk Import สมาชิกจาก JSON</summary>
+    [HttpPost("bulk-import")]
+    public async Task<IActionResult> BulkImport([FromBody] List<MemberImportDto> dtos, [FromQuery] int? companysId)
+    {
+        if (dtos == null || !dtos.Any())
+            return BadRequest(new { error = "No member data provided" });
+
+        var result = await _memberService.BulkImportAsync(dtos, companysId);
+        return Ok(result);
     }
 
     // ─── Mapping ──────────────────────────────────
@@ -338,4 +426,22 @@ public class PointPolicyCreateDto
     public int? ExpiryDays { get; set; }
     public DateTime EffectiveFrom { get; set; }
     public DateTime? EffectiveTo { get; set; }
+}
+
+public class AdminMemberCreateDto
+{
+    public string? DisplayName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public int? CompanysId { get; set; }
+    public string? LineDisplayName { get; set; }
+    public string? LineUserId { get; set; }
+}
+
+public class AdminMemberUpdateDto
+{
+    public string? DisplayName { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Status { get; set; }
 }

@@ -58,10 +58,14 @@ public class RewardService
             throw new InvalidOperationException("Reward is not available");
 
         // 2. สร้าง redemption record (status = Reserved)
+        var seq = await _db.RewardRedemptions.CountAsync() + 1;
         var redemption = new RewardRedemption
         {
             MemberId = req.MemberId,
             RewardId = req.RewardId,
+            RedemptionCode = $"RD-{DateTime.UtcNow:yyyyMMdd}-{seq:D4}",
+            RewardNameSnapshot = reward.RewardName,
+            RewardTypeSnapshot = reward.RewardType,
             PointsSpent = reward.PointsCost,
             Status = "Reserved",
             ReservedAt = DateTime.UtcNow,
@@ -72,23 +76,28 @@ public class RewardService
 
         try
         {
-            // 3. Reserve points
+            // 3. Reserve points (Transactionally logic handled in point service)
             var reserveEntry = await _pointService.ReserveAsync(
                 req.MemberId, reward.PointsCost,
                 redemption.RedemptionId.ToString());
             redemption.LedgerId = reserveEntry.LedgerId;
 
-            // 4. หา code ที่ available
-            var code = await _db.RewardCodes
-                .Where(c => c.RewardId == req.RewardId && c.Status == "Available")
-                .FirstOrDefaultAsync();
-
-            if (code != null)
+            // 4. หา code ที่ available (ถ้าเป็นประเภท Digital Code)
+            RewardCode? code = null;
+            if (reward.RewardType == "CODE")
             {
-                code.Status = "Issued";
-                code.IssuedAt = DateTime.UtcNow;
-                code.RedemptionId = redemption.RedemptionId;
-                redemption.RewardCodeId = code.RewardCodeId;
+                code = await _db.RewardCodes
+                    .Where(c => c.RewardId == req.RewardId && c.Status == "Available")
+                    .FirstOrDefaultAsync();
+
+                if (code != null)
+                {
+                    code.Status = "Issued";
+                    code.IssuedAt = DateTime.UtcNow;
+                    code.RedemptionId = redemption.RedemptionId;
+                    redemption.RewardCodeId = code.RewardCodeId;
+                    redemption.CouponCode = code.Code;
+                }
             }
 
             // 5. Burn points
@@ -102,9 +111,22 @@ public class RewardService
             // 7. Complete
             redemption.Status = "Completed";
             redemption.CompletedAt = DateTime.UtcNow;
+
+            // 8. Create fulfillment for physical rewards
+            if (reward.RewardType == "PHYSICAL")
+            {
+                _db.RewardFulfillments.Add(new RewardFulfillment
+                {
+                    RedemptionId = redemption.RedemptionId,
+                    FulfillmentType = "PHYSICAL",
+                    FulfillmentStatus = "PENDING",
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
             await _db.SaveChangesAsync();
 
-            // 8. ส่ง LINE notification
+            // 9. ส่ง LINE notification
             try
             {
                 var bal = await _pointService.GetBalanceAsync(req.MemberId);
@@ -117,10 +139,11 @@ public class RewardService
             return new RedemptionResultDto
             {
                 RedemptionId = redemption.RedemptionId,
-                Status = "Completed",
+                RedemptionCode = redemption.RedemptionCode,
+                Status = redemption.Status,
                 PointsSpent = reward.PointsCost,
                 Code = code?.Code,
-                Message = code != null ? "Reward code issued successfully" : "Reward redeemed (no code assigned)"
+                Message = (reward.RewardType == "CODE" && code == null) ? "Reward redeemed but no code available" : "Redemption successful"
             };
         }
         catch
@@ -239,6 +262,7 @@ public class RewardService
         return await _db.RewardRedemptions
             .Include(r => r.Reward)
             .Include(r => r.RewardCode)
+            .Include(r => r.Fulfillment)
             .Where(r => r.MemberId == memberId)
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -246,15 +270,21 @@ public class RewardService
             .Select(r => new MemberRedemptionDto
             {
                 RedemptionId = r.RedemptionId,
-                RewardName = r.Reward.RewardName,
-                RewardType = r.Reward.RewardType,
-                PlatformType = r.Reward.PlatformType,
-                Description = r.Reward.Description,
+                RedemptionCode = r.RedemptionCode,
+                RewardName = r.RewardNameSnapshot,
+                RewardType = r.RewardTypeSnapshot,
                 PointsSpent = r.PointsSpent,
-                Code = r.RewardCode != null ? r.RewardCode.Code : null,
+                Code = r.CouponCode,
                 Status = r.Status,
                 RedeemedAt = r.CompletedAt ?? r.ReservedAt,
-                ImageUrl = r.Reward.ImageUrl
+                ImageUrl = r.Reward.ImageUrl,
+                Fulfillment = r.Fulfillment == null ? null : new RedemptionFulfillmentDto
+                {
+                    FulfillmentStatus = r.Fulfillment.FulfillmentStatus,
+                    CarrierName = r.Fulfillment.CarrierName,
+                    TrackingNo = r.Fulfillment.TrackingNo,
+                    ShippedAt = r.Fulfillment.ShippedAt
+                }
             })
             .ToListAsync();
     }
@@ -280,6 +310,7 @@ public class RedemptionListDto
 public class MemberRedemptionDto
 {
     public long RedemptionId { get; set; }
+    public string RedemptionCode { get; set; } = default!;
     public string RewardName { get; set; } = "";
     public string? RewardType { get; set; }
     public string? PlatformType { get; set; }
@@ -289,4 +320,5 @@ public class MemberRedemptionDto
     public string Status { get; set; } = "";
     public DateTime RedeemedAt { get; set; }
     public string? ImageUrl { get; set; }
+    public RedemptionFulfillmentDto? Fulfillment { get; set; }
 }

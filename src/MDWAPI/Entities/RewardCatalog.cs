@@ -56,14 +56,21 @@ public class RewardRedemption
 {
     [Key] public long RedemptionId { get; set; }
 
+    [Required, MaxLength(50)] public string RedemptionCode { get; set; } = default!;
     public long MemberId { get; set; }
     public int RewardId { get; set; }
     public long? RewardCodeId { get; set; }
+    [Required, MaxLength(200)] public string RewardNameSnapshot { get; set; } = default!;
+    [MaxLength(30)] public string? RewardTypeSnapshot { get; set; }
     public int PointsSpent { get; set; }
     [Required, MaxLength(20)] public string Status { get; set; } = "Reserved"; // Reserved / Completed / Cancelled / Failed
+    [MaxLength(200)] public string? CouponCode { get; set; }
+    public string? QrPayload { get; set; }
     public DateTime ReservedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public DateTime? UsedAt { get; set; }
     public long? LedgerId { get; set; }
     public DateTime CreatedAt { get; set; }
 
@@ -79,6 +86,9 @@ public class RewardRedemption
 
     [ForeignKey(nameof(LedgerId))]
     public PointLedgerEntry? LedgerEntry { get; set; }
+
+    public RewardFulfillment? Fulfillment { get; set; }
+    public List<RewardRedemptionHistory> StatusHistories { get; set; } = new();
 }
 
 // ─── 18. OutboxMessages ───────────────────────────

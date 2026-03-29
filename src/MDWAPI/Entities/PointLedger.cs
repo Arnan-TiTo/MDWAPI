@@ -31,6 +31,7 @@ public class PointAccount
 
     public long MemberId { get; set; }
     public int AvailablePoints { get; set; }
+    public int PendingPoints { get; set; }
     public int ReservedPoints { get; set; }
     public int TotalEarned { get; set; }
     public int TotalBurned { get; set; }
@@ -56,6 +57,8 @@ public class PointLedgerEntry
     public int? PolicyId { get; set; }
     [MaxLength(30)] public string? RefType { get; set; } // ORDER / REDEMPTION / ADJUSTMENT / CLAIM
     [MaxLength(100)] public string? RefId { get; set; }
+    public bool IsPending { get; set; }
+    public DateTime? ReadyAt { get; set; }
     public DateTime OccurredAt { get; set; }
     [MaxLength(100)] public string? CreatedBy { get; set; }
     [MaxLength(200)] public string? IdempotencyKey { get; set; }

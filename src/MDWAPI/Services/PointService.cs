@@ -203,6 +203,7 @@ public class PointService
         return new PointBalanceDto
         {
             AvailablePoints = pa.AvailablePoints,
+            PendingPoints = pa.PendingPoints,
             ReservedPoints = pa.ReservedPoints,
             TotalEarned = pa.TotalEarned,
             TotalBurned = pa.TotalBurned,
@@ -246,7 +247,7 @@ public class PointService
             return null; // ลงซ้ำแล้ว
 
         var account = await GetOrCreateAccountAsync(memberId);
-        account.AvailablePoints += points;
+        account.PendingPoints += points;
         account.TotalEarned += points;
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
@@ -256,10 +257,12 @@ public class PointService
             MemberId = memberId,
             TxnType = "EARN",
             Points = points,
-            BalanceAfter = account.AvailablePoints,
+            BalanceAfter = account.AvailablePoints, // Note: BalanceAfter shows Available only
             PolicyId = policyId,
             RefType = "ORDER",
             RefId = refId,
+            IsPending = true,
+            ReadyAt = DateTime.UtcNow.AddDays(7),
             OccurredAt = DateTime.UtcNow,
             CreatedBy = createdBy ?? "SYSTEM",
             IdempotencyKey = idempotencyKey,
@@ -269,25 +272,7 @@ public class PointService
         _db.PointLedger.Add(entry);
         await _db.SaveChangesAsync();
 
-        // ─── Point Expiry: สร้าง PointExpiration ถ้า policy มี ExpiryDays ───
-        if (policyId.HasValue)
-        {
-            var policy = await _db.PointPolicies.FindAsync(policyId.Value);
-            if (policy?.ExpiryDays != null && policy.ExpiryDays > 0)
-            {
-                _db.PointExpirations.Add(new PointExpiration
-                {
-                    MemberId = memberId,
-                    SourceLedgerId = entry.LedgerId,
-                    OriginalPoints = points,
-                    RemainingPoints = points,
-                    ExpiresAt = DateTime.UtcNow.AddDays(policy.ExpiryDays.Value),
-                    Status = "Active"
-                });
-                await _db.SaveChangesAsync();
-            }
-        }
-
+        // Note: Expiry will be created when points become available in PointPendingService
         return entry;
     }
 
