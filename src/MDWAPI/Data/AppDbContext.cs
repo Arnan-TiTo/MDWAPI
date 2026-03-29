@@ -649,9 +649,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<ThailandAddress>(e =>
         {
             e.ToTable("ThailandAddress", "mbw");
-            e.HasKey(x => x.tambonID);
+            e.HasKey(x => x.Id);
             e.HasIndex(x => x.province);
             e.HasIndex(x => x.district);
+            e.HasIndex(x => x.tambonID);
         });
     }
 

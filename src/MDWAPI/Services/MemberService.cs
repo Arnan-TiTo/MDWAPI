@@ -10,100 +10,136 @@ namespace MDWAPI.Services;
 public class MemberService
 {
     private readonly AppDbContext _db;
+    private readonly PointService _pointService;
+    private readonly TierService _tierService;
 
-    public MemberService(AppDbContext db) => _db = db;
+    public MemberService(AppDbContext db, PointService pointService, TierService tierService)
+    {
+        _db = db;
+        _pointService = pointService;
+        _tierService = tierService;
+    }
 
     /// <summary>สมัครสมาชิกใหม่</summary>
     public async Task<MemberProfileDto> RegisterAsync(MemberRegisterRequest req)
     {
-        // 1. generate code
-        var seq = await _db.Members_Mbw.CountAsync() + 1;
-        var code = $"MBW-{seq:D6}";
-
-        // 2. create member
-        var member = new Member
+        // Resolve CompanysId from LiffId
+        int? resolvedCompanysId = req.CompanysId;
+        if (!string.IsNullOrEmpty(req.LiffId))
         {
-            MemberCode = code,
-            DisplayName = req.DisplayName,
-            Phone = req.Phone,
-            Email = req.Email,
-            Status = "Active",
-            ConsentAccepted = req.ConsentAccepted,
-            ConsentedAt = req.ConsentAccepted ? DateTime.UtcNow : null,
-            RegisteredAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow,
-            CompanysId = req.CompanysId,
-            RegisterChannelId = req.RegisterChannelId,
-            PreferredLanguage = req.PreferredLanguage,
-            PhoneCountryCode = req.PhoneCountryCode
-        };
-
-        _db.Members_Mbw.Add(member);
-        await _db.SaveChangesAsync();
-
-        // 3. handle registration answers
-        if (req.ProductOptionIds != null && req.ProductOptionIds.Any())
-        {
-            foreach (var optId in req.ProductOptionIds)
+            var oaConfig = await _db.LineOaConfigs.FirstOrDefaultAsync(c => c.LiffId == req.LiffId && c.IsActive);
+            if (oaConfig != null)
             {
-                _db.MemberRegistrationAnswers.Add(new MemberRegistrationAnswer
-                {
-                    MemberId = member.MemberId,
-                    OptionId = optId,
-                    OtherText = req.OtherProductText,
-                    CreatedAt = DateTime.UtcNow
-                });
+                resolvedCompanysId = oaConfig.CompanysId;
             }
         }
 
-        // 4. handle consent logs
-        if (req.ConsentAccepted)
-        {
-            // Find latest active TERMS and PRIVACY
-            var docs = await _db.ContentDocuments
-                .Where(d => d.IsActive && (d.DocumentType == "TERMS" || d.DocumentType == "PRIVACY"))
-                .ToListAsync();
-
-            foreach (var doc in docs)
-            {
-                _db.MemberConsentLogs.Add(new MemberConsentLog
-                {
-                    MemberId = member.MemberId,
-                    DocumentId = doc.DocumentId,
-                    AcceptedFlag = true,
-                    AcceptedAt = DateTime.UtcNow,
-                    AcceptedFromChannel = "LIFF",
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-        }
-
-        // 5. สร้าง PointAccount
-        _db.PointAccounts.Add(new PointAccount
-        {
-            MemberId = member.MemberId,
-            UpdatedAt = DateTime.UtcNow
-        });
-
-        // 6. สร้าง LINE identity ถ้ามี
+        // 0. Check for existing LineUserId (ANY status, even inactive)
         if (!string.IsNullOrEmpty(req.LineUserId))
         {
-            _db.MemberIdentities.Add(new MemberIdentity
+            var isTaken = await _db.MemberIdentities
+                .AnyAsync(x => x.ProviderUserKey == req.LineUserId);
+            if (isTaken)
             {
-                MemberId = member.MemberId,
-                ProviderType = req.LineProviderType ?? "LINE_OA",
-                ProviderUserKey = req.LineUserId,
-                DisplayName = req.DisplayName,
-                PictureUrl = req.LinePictureUrl,
-                LinkedAt = DateTime.UtcNow,
-                IsActive = true,
-                CompanysId = req.CompanysId
-            });
+                throw new InvalidOperationException("This LINE account is already linked to a member.");
+            }
         }
 
-        await _db.SaveChangesAsync();
+        using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // 1. Create Member with Highly Unique Code
+            var now = DateTime.UtcNow;
+            var memberCode = $"MBW-{now:yyMMdd}-{now.Ticks % 1000000:D6}";
 
-        return await GetProfileAsync(member.MemberId);
+            var member = new Member
+            {
+                MemberCode = memberCode,
+                DisplayName = $"{req.FirstName} {req.LastName}".Trim(),
+                FirstName = req.FirstName,
+                LastName = req.LastName,
+                Phone = req.Phone,
+                Email = req.Email,
+                BirthDate = req.BirthDate,
+                Age = req.Age,
+                Status = "Active",
+                ConsentAccepted = req.ConsentAccepted,
+                ConsentedAt = DateTime.UtcNow,
+                RegisteredAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+                CompanysId = resolvedCompanysId,
+                RegisterChannelId = req.RegisterChannelId,
+                PreferredLanguage = req.PreferredLanguage,
+                PhoneCountryCode = req.PhoneCountryCode,
+                PointsForTier = 0
+            };
+            _db.Members_Mbw.Add(member);
+            await _db.SaveChangesAsync();
+
+            // 2. Member Identity (LINE)
+            if (!string.IsNullOrEmpty(req.LineUserId))
+            {
+                _db.MemberIdentities.Add(new MemberIdentity
+                {
+                    MemberId = member.MemberId,
+                    ProviderType = "LINE_OA",
+                    ProviderUserKey = req.LineUserId,
+                    DisplayName = req.DisplayName,
+                    PictureUrl = req.LinePictureUrl,
+                    LinkedAt = DateTime.UtcNow,
+                    IsActive = true,
+                    CompanysId = resolvedCompanysId
+                });
+            }
+
+            // 3. Other related data
+            if (req.ProductOptionIds != null)
+            {
+                foreach (var optId in req.ProductOptionIds)
+                {
+                    _db.MemberRegistrationAnswers.Add(new MemberRegistrationAnswer
+                    {
+                        MemberId = member.MemberId,
+                        OptionId = optId,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            // Save immediately so PointService can find the account
+            await _db.SaveChangesAsync();
+
+            // 4. Welcome Points
+            await _pointService.AdjustAsync(new PointAdjustRequest
+            {
+                MemberId = member.MemberId,
+                AdjustType = "ADD",
+                Points = 100,
+                Reason = "Welcome Points"
+            }, 0, "SYSTEM");
+
+            // 5. Welcome Notification
+            _db.MemberNotifications.Add(new MemberNotification
+            {
+                MemberId = member.MemberId,
+                NotificationType = "SYSTEM",
+                Title = "สมัครสมาชิกสำเร็จ",
+                Message = "ยินดีต้อนรับ! คุณได้รับ 100 พอยท์สำหรับสมาชิกใหม่",
+                CreatedAt = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
+
+            // 6. Initial Tier Calculation & History
+            await _tierService.UpdateMemberTierAsync(member.MemberId, "Initial Registration Tier");
+
+            await transaction.CommitAsync();
+            return await GetProfileAsync(member.MemberId);
+        }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     /// <summary>ถ้า Member/MemberIdentity ยังไม่มี CompanysId → set ให้</summary>
@@ -183,16 +219,14 @@ public class MemberService
         return profile;
     }
 
-    /// <summary>ค้นหา member จาก LINE userId</summary>
     public async Task<MemberProfileDto?> GetByLineUserIdAsync(string lineUserId)
     {
         var identity = await _db.MemberIdentities
-            .Include(x => x.Member).ThenInclude(m => m.Identities)
-            .Include(x => x.Member).ThenInclude(m => m.PlatformAccounts)
-            .Include(x => x.Member).ThenInclude(m => m.PointAccount)
             .FirstOrDefaultAsync(x => x.ProviderUserKey == lineUserId && x.IsActive);
 
-        return identity == null ? null : MapToProfile(identity.Member);
+        if (identity == null) return null;
+
+        return await GetProfileAsync(identity.MemberId);
     }
 
     /// <summary>ค้นหา members สำหรับ admin</summary>
@@ -1056,6 +1090,28 @@ public class MemberService
                 OptionCode = o.OptionCode,
                 OptionName = o.OptionName,
                 IsAllowOtherText = o.IsAllowOtherText
+            })
+            .ToListAsync();
+    }
+    /// <summary>ดึงตัวเลือกระดับสมาชิก (Masters)</summary>
+    public async Task<List<TierMasterDto>> GetTiersAsync()
+    {
+        return await _db.TierMasters
+            .Where(t => t.IsActive)
+            .OrderBy(t => t.SortOrder)
+            .Select(t => new TierMasterDto
+            {
+                TierId = t.TierId,
+                TierCode = t.TierCode,
+                TierName = t.TierName,
+                MinPoints = t.MinPoints,
+                MaxPoints = t.MaxPoints,
+                MinSpendAmount = t.MinSpendAmount,
+                MaxSpendAmount = t.MaxSpendAmount,
+                TierColor = t.TierColor,
+                IconUrl = t.IconUrl,
+                Description = t.Description,
+                SortOrder = t.SortOrder
             })
             .ToListAsync();
     }

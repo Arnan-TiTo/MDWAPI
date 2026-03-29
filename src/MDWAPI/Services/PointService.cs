@@ -174,11 +174,13 @@ public class PointService
 {
     private readonly AppDbContext _db;
     private readonly AuditService _audit;
+    private readonly TierService _tierService;
 
-    public PointService(AppDbContext db, AuditService audit)
+    public PointService(AppDbContext db, AuditService audit, TierService tierService)
     {
         _db = db;
         _audit = audit;
+        _tierService = tierService;
     }
 
     /// <summary>ดูยอดคงเหลือ</summary>
@@ -251,6 +253,15 @@ public class PointService
         account.TotalEarned += points;
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
+
+        // Update Member.PointsForTier immediately for status
+        var member = await _db.Members_Mbw.FindAsync(memberId);
+        if (member != null)
+        {
+            member.PointsForTier += points;
+            await _db.SaveChangesAsync();
+            await _tierService.UpdateMemberTierAsync(memberId, $"Earn from {refId}");
+        }
 
         var entry = new PointLedgerEntry
         {
@@ -429,6 +440,14 @@ public class PointService
         account.LastActivityAt = DateTime.UtcNow;
         account.UpdatedAt = DateTime.UtcNow;
 
+        // Update Member.PointsForTier for status
+        var member = await _db.Members_Mbw.FindAsync(req.MemberId);
+        if (member != null)
+        {
+            member.PointsForTier += delta;
+            await _tierService.UpdateMemberTierAsync(req.MemberId, $"Adjustment: {req.Reason}");
+        }
+
         var entry = new PointLedgerEntry
         {
             MemberId = req.MemberId,
@@ -438,10 +457,24 @@ public class PointService
             RefType = "ADJUSTMENT",
             OccurredAt = DateTime.UtcNow,
             CreatedBy = adminUsername,
+            IdempotencyKey = $"ADJUST-{req.MemberId}-{req.Reason}-{DateTime.UtcNow.Ticks}",
             CreatedAt = DateTime.UtcNow
         };
         _db.PointLedger.Add(entry);
-        await _db.SaveChangesAsync();
+
+        // Create Expiration if points were added
+        if (req.AdjustType == "ADD")
+        {
+            _db.PointExpirations.Add(new PointExpiration
+            {
+                MemberId = req.MemberId,
+                SourceLedger = entry,
+                OriginalPoints = req.Points,
+                RemainingPoints = req.Points,
+                ExpiresAt = DateTime.UtcNow.AddDays(365),
+                Status = "Active"
+            });
+        }
 
         var adj = new PointAdjustment
         {
@@ -451,12 +484,13 @@ public class PointService
             Reason = req.Reason,
             ApprovedBy = adminUsername,
             ApprovedAt = DateTime.UtcNow,
-            LedgerId = entry.LedgerId,
+            LedgerEntry = entry, // Uses navigation property to automatically get the ID
             CreatedBy = adminUsername,
             CreatedAt = DateTime.UtcNow
         };
         _db.PointAdjustments.Add(adj);
-        await _db.SaveChangesAsync();
+
+        await _db.SaveChangesAsync(); // A single save resolves all IDs safely
 
         await _audit.LogAsync(adminUserId, "ADJUST_POINTS", "PointLedger", entry.LedgerId.ToString(),
             newValue: $"{req.AdjustType} {req.Points} pts: {req.Reason}");

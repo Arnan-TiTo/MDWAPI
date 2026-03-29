@@ -27,7 +27,7 @@ public class RewardService
         var now = DateTime.UtcNow;
         return await _db.RewardCatalog
             .Where(r => r.IsActive
-                && r.StockRemaining > 0
+                && (r.StockRemaining > 0 || r.Codes.Any(c => c.Status == "Available"))
                 && (r.ValidFrom == null || r.ValidFrom <= now)
                 && (r.ValidTo == null || r.ValidTo >= now))
             .OrderBy(r => r.PointsCost)
@@ -37,9 +37,13 @@ public class RewardService
                 RewardName = r.RewardName,
                 Description = r.Description,
                 PlatformType = r.PlatformType,
-                RewardType = r.RewardType,
+                RewardType = (r.RewardType != "CODE" && r.RewardType != "DISCOUNT_CODE" && r.RewardType != "COUPON" && r.Codes.Any()) 
+                    ? "DISCOUNT_CODE" 
+                    : r.RewardType,
                 PointsCost = r.PointsCost,
-                StockRemaining = r.StockRemaining,
+                StockRemaining = (r.RewardType == "CODE" || r.RewardType == "DISCOUNT_CODE" || r.RewardType == "COUPON" || r.Codes.Any())
+                    ? r.Codes.Count(c => c.Status == "Available")
+                    : r.StockRemaining,
                 ImageUrl = r.ImageUrl,
                 ValidFrom = r.ValidFrom,
                 ValidTo = r.ValidTo
@@ -58,7 +62,8 @@ public class RewardService
             throw new InvalidOperationException("Reward is not available");
 
         // 2. สร้าง redemption record (status = Reserved)
-        var seq = await _db.RewardRedemptions.CountAsync() + 1;
+        var maxId = await _db.RewardRedemptions.MaxAsync(r => (long?)r.RedemptionId) ?? 0L;
+        var seq = maxId + 1;
         var redemption = new RewardRedemption
         {
             MemberId = req.MemberId,
@@ -82,22 +87,24 @@ public class RewardService
                 redemption.RedemptionId.ToString());
             redemption.LedgerId = reserveEntry.LedgerId;
 
-            // 4. หา code ที่ available (ถ้าเป็นประเภท Digital Code)
+            // 4. หา code ที่ available (ถ้าเป็นประเภท Digital Code หรือมี RewardCodes เซ็ตไว้)
             RewardCode? code = null;
-            if (reward.RewardType == "CODE")
+            var requiresCode = reward.RewardType == "CODE" || reward.RewardType == "DISCOUNT_CODE" || reward.RewardType == "COUPON" || await _db.RewardCodes.AnyAsync(c => c.RewardId == req.RewardId);
+            
+            if (requiresCode)
             {
                 code = await _db.RewardCodes
                     .Where(c => c.RewardId == req.RewardId && c.Status == "Available")
                     .FirstOrDefaultAsync();
 
-                if (code != null)
-                {
-                    code.Status = "Issued";
-                    code.IssuedAt = DateTime.UtcNow;
-                    code.RedemptionId = redemption.RedemptionId;
-                    redemption.RewardCodeId = code.RewardCodeId;
-                    redemption.CouponCode = code.Code;
-                }
+                if (code == null)
+                    throw new InvalidOperationException("ของรางวัลนี้ไม่มีโค้ดในระบบแล้ว (Out of stock)");
+
+                code.Status = "Issued";
+                code.IssuedAt = DateTime.UtcNow;
+                code.RedemptionId = redemption.RedemptionId;
+                redemption.RewardCodeId = code.RewardCodeId;
+                redemption.CouponCode = code.Code;
             }
 
             // 5. Burn points
@@ -274,7 +281,9 @@ public class RewardService
                 RewardName = r.RewardNameSnapshot,
                 RewardType = r.RewardTypeSnapshot,
                 PointsSpent = r.PointsSpent,
-                Code = r.CouponCode,
+                Code = r.RewardCode != null ? r.RewardCode.Code : 
+                       (!string.IsNullOrEmpty(r.CouponCode) ? r.CouponCode : 
+                       ((r.RewardTypeSnapshot == "CODE" || r.RewardTypeSnapshot == "DISCOUNT_CODE" || r.RewardTypeSnapshot == "COUPON") ? "PENDING-CODE" : null)),
                 Status = r.Status,
                 RedeemedAt = r.CompletedAt ?? r.ReservedAt,
                 ImageUrl = r.Reward.ImageUrl,

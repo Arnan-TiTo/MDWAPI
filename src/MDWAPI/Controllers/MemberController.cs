@@ -29,7 +29,15 @@ public class MemberController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>ดึงตัวเลือก "คุณรู้จักเราผ่านที่ไหน" (Masters)</summary>
+    /// <summary>ดึงตัวเลือกระดับสมาชิก (Masters)</summary>
+    [HttpGet("master/tiers")]
+    public async Task<IActionResult> GetTiers()
+    {
+        var result = await _memberService.GetTiersAsync();
+        return Ok(result);
+    }
+
+    /// <summary>ดึงตัวเลือกที่รู้จักเราผ่านที่ไหน (Masters)</summary>
     [HttpGet("master/registration-options")]
     public async Task<IActionResult> GetRegistrationOptions()
     {
@@ -48,7 +56,13 @@ public class MemberController : ControllerBase
         }
         catch (Exception ex)
         {
-            return BadRequest(new { error = ex.Message });
+            // Log full exception to console for debugging
+            Console.WriteLine($"[REGISTER ERROR] {ex}");
+            
+            // Get deepest inner exception
+            var inner = ex;
+            while (inner.InnerException != null) inner = inner.InnerException;
+            return BadRequest(new { error = ex.Message, inner = inner.Message });
         }
     }
 

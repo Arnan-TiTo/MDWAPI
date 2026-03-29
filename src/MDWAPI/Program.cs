@@ -90,14 +90,15 @@ builder.Services.AddScoped<MemberMappingService>();
 builder.Services.AddScoped<PointPolicyEngine>();
 builder.Services.AddScoped<PointService>();
 builder.Services.AddScoped<RewardService>();
-builder.Services.AddScoped<ContentService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<TierService>();
 builder.Services.AddScoped<EarnProcessingService>();
 builder.Services.AddScoped<LineNotificationService>();
 builder.Services.AddScoped<ReturnRefundSyncService>();
 builder.Services.AddHttpClient<LineLoginService>();
 builder.Services.AddHttpClient<LineWebhookService>();
 builder.Services.AddScoped<ThailandAddressSeedService>();
+builder.Services.AddScoped<ContentService>();
 
 
 // Background jobs
@@ -229,6 +230,9 @@ builder.Services.AddCors(options =>
                      "https://localhost:7156",
                      "http://localhost:5000",
                      "https://localhost:5001",
+                     "http://localhost:5500",
+                     "http://127.0.0.1:5500",
+                     "https://nonsequentially-unsummarized-maurine.ngrok-free.dev",
                      "https://liff.line.me")
         .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
         .AllowAnyHeader()
@@ -252,6 +256,9 @@ var app = builder.Build();
 //// seed admin
 using (var scope = app.Services.CreateScope())
 {
+    Console.WriteLine("**************************************************");
+    Console.WriteLine("DEBUG: ENTERING SEED SCOPE");
+    Console.WriteLine("**************************************************");
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
 
@@ -267,8 +274,15 @@ using (var scope = app.Services.CreateScope())
         db.SaveChanges();
     }
 
-    var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
-    addressSeed.SeedAsync().Wait();
+    // try 
+    // {
+    //     var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
+    //     addressSeed.SeedAsync().GetAwaiter().GetResult();
+    // }
+    // catch (Exception ex)
+    // {
+    //     Console.WriteLine($"[CRITICAL ERROR] Address Seeding Failed: {ex.Message}");
+    // }
 }
 
 

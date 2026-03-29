@@ -4,6 +4,10 @@ namespace MDWAPI.DTOs;
 public class MemberRegisterRequest
 {
     public string? DisplayName { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public int? Age { get; set; }
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public bool ConsentAccepted { get; set; }
@@ -17,6 +21,7 @@ public class MemberRegisterRequest
     public string? LineProviderType { get; set; }   // LINE_LOGIN / LINE_OA
     public string? LineUserId { get; set; }
     public string? LinePictureUrl { get; set; }
+    public string? LiffId { get; set; }
 
     // Company association (resolved from LIFF ID → LineOaConfig)
     public int? CompanysId { get; set; }
@@ -361,15 +366,19 @@ public class ContentDocumentDto
     public string ContentHtml { get; set; } = default!;
 }
 
-public class TierDto
+public class TierMasterDto
 {
     public int TierId { get; set; }
     public string TierCode { get; set; } = default!;
     public string TierName { get; set; } = default!;
     public decimal MinPoints { get; set; }
+    public decimal? MaxPoints { get; set; }
+    public decimal MinSpendAmount { get; set; }
+    public decimal? MaxSpendAmount { get; set; }
     public string? TierColor { get; set; }
     public string? IconUrl { get; set; }
     public string? Description { get; set; }
+    public int SortOrder { get; set; }
 }
 
 public class MemberNotificationDto

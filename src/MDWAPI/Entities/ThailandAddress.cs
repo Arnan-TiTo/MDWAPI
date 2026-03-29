@@ -9,16 +9,16 @@ public class ThailandAddress
     [Key]
     public int Id { get; set; }
     
-    [MaxLength(100)]
+    [MaxLength(200)]
     public string tambonID { get; set; } = string.Empty;
     
-    [MaxLength(100)]
+    [MaxLength(200)]
     public string subDistrict { get; set; } = string.Empty;
     
-    [MaxLength(100)]
+    [MaxLength(200)]
     public string district { get; set; } = string.Empty;
     
-    [MaxLength(100)]
+    [MaxLength(200)]
     public string province { get; set; } = string.Empty;
     
     [MaxLength(20)]
