@@ -291,6 +291,7 @@ public class PointHistoryDto
     public string? RefId { get; set; }
     public DateTime OccurredAt { get; set; }
     public string? CreatedBy { get; set; }
+    public DateTime? ExpiresAt { get; set; }
 }
 
 public class PointAdjustRequest

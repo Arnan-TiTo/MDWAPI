@@ -219,23 +219,26 @@ public class PointService
     /// <summary>ดูประวัติ transaction</summary>
     public async Task<List<PointHistoryDto>> GetHistoryAsync(long memberId, int page = 1, int pageSize = 20)
     {
-        return await _db.PointLedger
-            .Where(l => l.MemberId == memberId)
-            .OrderByDescending(l => l.OccurredAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(l => new PointHistoryDto
-            {
-                LedgerId = l.LedgerId,
-                TxnType = l.TxnType,
-                Points = l.Points,
-                BalanceAfter = l.BalanceAfter,
-                RefType = l.RefType,
-                RefId = l.RefId,
-                OccurredAt = l.OccurredAt,
-                CreatedBy = l.CreatedBy
-            })
-            .ToListAsync();
+        return await (from l in _db.PointLedger
+                      join e in _db.PointExpirations on l.LedgerId equals e.SourceLedgerId into ej
+                      from e in ej.DefaultIfEmpty()
+                      where l.MemberId == memberId
+                      orderby l.OccurredAt descending
+                      select new PointHistoryDto
+                      {
+                          LedgerId = l.LedgerId,
+                          TxnType = l.TxnType,
+                          Points = l.Points,
+                          BalanceAfter = l.BalanceAfter,
+                          RefType = l.RefType,
+                          RefId = l.RefId,
+                          OccurredAt = l.OccurredAt,
+                          CreatedBy = l.CreatedBy,
+                          ExpiresAt = e != null ? (DateTime?)e.ExpiresAt : null
+                      })
+                      .Skip((page - 1) * pageSize)
+                      .Take(pageSize)
+                      .ToListAsync();
     }
 
     /// <summary>Earn points จาก order</summary>
