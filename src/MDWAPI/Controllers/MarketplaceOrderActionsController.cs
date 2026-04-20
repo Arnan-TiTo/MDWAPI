@@ -712,6 +712,35 @@ public class MarketplaceOrderActionsController : ControllerBase
         }
     }
 
+    // ====== 2.5) Reload Label (bypass DB check — for diagnostics) ======
+
+    [HttpPost("reload-label")]
+    public async Task<IActionResult> ReloadLabel(
+        [FromQuery] Platform platform,
+        [FromQuery] long shopId,
+        [FromQuery] string orderRef,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderRef))
+            return BadRequest(new { message = "orderRef is required." });
+
+        if (platform != Platform.Shopee)
+            return BadRequest(new { message = $"Platform {platform} is not supported. Only Shopee is supported." });
+
+        await RefreshTokenIfNeededAsync(platform.ToString(), shopId, ct);
+
+        try
+        {
+            var labelMsg = await CreateAndSaveLabelAsync(platform.ToString(), shopId, orderRef, ct);
+            return Ok(new { orderRef, shopId, platform = platform.ToString(), message = labelMsg });
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "ReloadLabel failed for {OrderRef}", orderRef);
+            return StatusCode(500, new { orderRef, shopId, platform = platform.ToString(), error = ex.Message });
+        }
+    }
+
     // ====== 3) Cancel Order ======
 
     [HttpPost("cancel")]

@@ -10,15 +10,18 @@ public class ThailandAddressSeedService
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ThailandAddressSeedService> _logger;
+    private readonly Microsoft.AspNetCore.Hosting.IWebHostEnvironment _env;
 
     public ThailandAddressSeedService(
         AppDbContext context,
         IConfiguration configuration,
-        ILogger<ThailandAddressSeedService> logger)
+        ILogger<ThailandAddressSeedService> logger,
+        Microsoft.AspNetCore.Hosting.IWebHostEnvironment env)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
+        _env = env;
     }
 
     public async Task SeedAsync()
@@ -29,12 +32,20 @@ public class ThailandAddressSeedService
             var keyNames = _context.Model.FindEntityType(typeof(ThailandAddress))?.FindPrimaryKey()?.Properties.Select(x => x.Name);
             _logger.LogWarning($"[DEBUG] EF Core thinks the Primary Key for ThailandAddress is: {string.Join(", ", keyNames ?? new[] { "NULL" })}");
 
-            string excelPath = @"d:\@Project\miniApp2GitVAC\vibeandchicweb\vibeandchicweb\ThepExcel-Thailand-Tambon.xlsx";
+            // 1. Get from config
+            string excelPathFromConfig = _configuration["SeedSettings:ThailandAddressExcelPath"] ?? "ThepExcel-Thailand-Tambon.xlsx";
+            
+            // 2. Resolve Path (If relative, make it relative to ContentRootPath)
+            string excelPath = excelPathFromConfig;
+            if (!Path.IsPathRooted(excelPath))
+            {
+                excelPath = Path.Combine(_env.ContentRootPath, excelPath);
+            }
             
             if (!File.Exists(excelPath))
             {
                 _logger.LogWarning($"[SEED ERROR] Excel file NOT FOUND at: {excelPath}");
-                _logger.LogWarning($"Excel file not found at {excelPath}");
+                _logger.LogWarning($"Please place 'ThepExcel-Thailand-Tambon.xlsx' in the application root or update 'SeedSettings:ThailandAddressExcelPath' in appsettings.json");
                 return;
             }
 
@@ -50,7 +61,7 @@ public class ThailandAddressSeedService
             var headerRow = worksheet.Row(1);
             var colMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var foundHeaders = new List<string>();
-            for (int i = 1; i <= worksheet.LastColumnUsed().ColumnNumber(); i++)
+            for (int i = 1; i <= (worksheet.LastColumnUsed()?.ColumnNumber() ?? 0); i++)
             {
                 var val = headerRow.Cell(i).GetValue<string>().Trim();
                 if (!string.IsNullOrEmpty(val)) 
@@ -62,7 +73,7 @@ public class ThailandAddressSeedService
             _logger.LogWarning($"[SEED INFO] Found columns: {string.Join(", ", foundHeaders)}");
 
             // Mapping based on your screenshot
-            string GetCol(params string[] aliases) => aliases.FirstOrDefault(a => colMap.ContainsKey(a));
+            string? GetCol(params string[] aliases) => aliases.FirstOrDefault(a => colMap.ContainsKey(a));
             
             string colPostcode = GetCol("PostCode", "postcode");
             string colTambonId = GetCol("TambonID", "tambonid");
@@ -81,7 +92,7 @@ public class ThailandAddressSeedService
                 return;
             }
 
-            var rows = worksheet.RangeUsed().RowsUsed().Skip(1); // Skip header
+            var rows = worksheet.RangeUsed()?.RowsUsed().Skip(1) ?? Enumerable.Empty<ClosedXML.Excel.IXLRangeRow>(); // Skip header
             var addresses = new List<ThailandAddress>();
 
             foreach (var row in rows)

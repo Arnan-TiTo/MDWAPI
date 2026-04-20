@@ -46,7 +46,6 @@ public class RewardCode
     [ForeignKey(nameof(RewardId))]
     public RewardCatalog Reward { get; set; } = default!;
 
-    [ForeignKey(nameof(RedemptionId))]
     public RewardRedemption? Redemption { get; set; }
 }
 

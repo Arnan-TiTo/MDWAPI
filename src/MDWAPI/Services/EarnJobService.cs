@@ -53,6 +53,7 @@ public class EarnProcessingService
                 ordersQuery = ordersQuery.Where(o => o.ShopId == account.ShopId.Value);
 
             var unlinkedOrders = await ordersQuery
+                .OrderBy(o => o.CreatedTimeUtc)
                 .Take(100)
                 .ToListAsync(ct);
 
@@ -132,7 +133,7 @@ public class EarnProcessingService
                     order.ExternalOrderId,
                     order.BuyerUsername
                 }
-            ).Take(200).ToListAsync(ct);
+            ).OrderBy(o => o.UnifiedOrderId).Take(200).ToListAsync(ct);
 
             _logger.LogInformation("Phase 1.5: Found {Count} linked completed orders to check", allLinkedCompleted.Count);
 
@@ -195,7 +196,7 @@ public class EarnProcessingService
                     }
                     else
                     {
-                        _logger.LogWarning(
+                        _logger.LogDebug(
                             "Phase 1.5: Order {OrderId} earned 0 pts (Channel={Channel}, Amount={Amount})",
                             item.ExternalOrderId, item.Channel, amount);
                     }

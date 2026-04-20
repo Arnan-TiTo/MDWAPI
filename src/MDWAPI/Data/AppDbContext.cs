@@ -286,6 +286,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.VerifiedStatus).HasDefaultValue("Pending");
             e.Property(x => x.LinkMethod).HasDefaultValue("MANUAL");
             e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            e.Property(x => x.ConfidenceScore).HasPrecision(5, 4);
             // cross-schema FK → mdw.Shops
             e.HasOne(x => x.Shop)
              .WithMany()
@@ -303,6 +304,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.SourceType).HasDefaultValue("ADMIN");
             e.Property(x => x.RequestStatus).HasDefaultValue("Pending");
             e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            e.Property(x => x.ConfidenceScore).HasPrecision(5, 4);
             e.HasMany(x => x.Evidences).WithOne(x => x.Request).HasForeignKey(x => x.RequestId);
         });
 
@@ -380,7 +382,7 @@ public class AppDbContext : DbContext
             e.HasIndex(x => new { x.IsActive, x.EffectiveFrom, x.EffectiveTo });
             e.Property(x => x.PlatformType).HasDefaultValue("ALL");
             e.Property(x => x.EarnFormula).HasDefaultValue("AMOUNT_DIV_100");
-            e.Property(x => x.EarnRate).HasDefaultValue(1.0m);
+            e.Property(x => x.EarnRate).HasPrecision(10, 4).HasDefaultValue(1.0m);
             e.Property(x => x.IsActive).HasDefaultValue(true);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
         });
@@ -451,6 +453,11 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Reward)
              .WithMany(x => x.Codes)
              .HasForeignKey(x => x.RewardId);
+            // ไม่มี inverse navigation ฝั่ง RewardRedemption เพื่อป้องกัน EF Core สับสน
+            e.HasOne(x => x.Redemption)
+             .WithMany()
+             .HasForeignKey(x => x.RedemptionId)
+             .OnDelete(DeleteBehavior.SetNull);
         });
 
         // 17. RewardRedemptions
@@ -654,6 +661,33 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.district);
             e.HasIndex(x => x.tambonID);
         });
+
+        // UnifiedOrderAddresses — Lat/Long ใช้ precision พิเศษ
+        modelBuilder.Entity<UnifiedOrderAddresses>(e =>
+        {
+            e.Property(x => x.Latitude).HasPrecision(9, 6);
+            e.Property(x => x.Longitude).HasPrecision(9, 6);
+        });
+
+        // ShopeeOrderItem — WeightKg ใช้ precision พิเศษ
+        modelBuilder.Entity<ShopeeOrderItem>(e =>
+        {
+            e.Property(x => x.WeightKg).HasPrecision(10, 3);
+        });
+
+        // ── Global decimal precision default (18,2) สำหรับทุก decimal ที่ยังไม่ได้กำหนด ──
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties()
+                .Where(p => p.ClrType == typeof(decimal) || p.ClrType == typeof(decimal?)))
+            {
+                if (property.GetPrecision() == null)
+                {
+                    property.SetPrecision(18);
+                    property.SetScale(2);
+                }
+            }
+        }
     }
 
 }

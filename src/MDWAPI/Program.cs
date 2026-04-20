@@ -19,8 +19,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-//  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
- ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+    ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+ //?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
 builder.Services.AddDbContext<AppDbContext>(
@@ -233,7 +233,10 @@ builder.Services.AddCors(options =>
                      "http://localhost:5500",
                      "http://127.0.0.1:5500",
                      "https://nonsequentially-unsummarized-maurine.ngrok-free.dev",
-                     "https://liff.line.me")
+                     "https://liff.line.me",
+                     "https://shp251.vibeandchic.com",
+                     "https://chicspheremember.vibeandchic.com"
+                     )
         .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
         .AllowAnyHeader()
     );
@@ -241,7 +244,10 @@ builder.Services.AddCors(options =>
         .WithOrigins("https://vibeandchic.com",
                      "https://adwportal.vibeanchic.com",
                      "https://localhost:5254",
-                     "https://liff.line.me")
+                     "https://liff.line.me",
+                     "https://shp251.vibeandchic.com",
+                     "https://chicspheremember.vibeandchic.com"
+                     )
         .WithMethods("POST", "GET", "PUT", "DELETE", "OPTIONS")
         .AllowAnyHeader()
     );
@@ -274,15 +280,18 @@ using (var scope = app.Services.CreateScope())
         db.SaveChanges();
     }
 
-    // try 
-    // {
-    //     var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
-    //     addressSeed.SeedAsync().GetAwaiter().GetResult();
-    // }
-    // catch (Exception ex)
-    // {
-    //     Console.WriteLine($"[CRITICAL ERROR] Address Seeding Failed: {ex.Message}");
-    // }
+    if (builder.Configuration.GetValue<bool>("SeedSettings:RunOnStartup"))
+    {
+        try 
+        {
+            var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
+            addressSeed.SeedAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[CRITICAL ERROR] Address Seeding Failed: {ex.Message}");
+        }
+    }
 }
 
 

@@ -20,6 +20,9 @@ namespace MDWAPI.Models
         public DateTime CreatedTimeUtc { get; set; }
         public DateTime? UpdatedTimeUtc { get; set; }
 
+        public string? BuyerUserId { get; set; }
+        public string? BuyerUsername { get; set; }
+
         // JSON columns from the view
         public string? ItemsJson { get; set; }
         public string? PaymentsJson { get; set; }
