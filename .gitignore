@@ -37,3 +37,17 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# MDWAPI — Seed & data files
+src/MDWAPI/*.xlsx
+src/MDWAPI/*.xls
+src/MDWAPI/*.csv
+
+# MDWAPI — Label storage (local path)
+Labels/
+
+# MDWAPI — wwwroot build output (frontend dist)
+src/MDWAPI/wwwroot/liff/dist/
+src/MDWAPI/wwwroot/liff/assets/
+src/MDWAPI/wwwroot/member/dist/
+src/MDWAPI/wwwroot/member/assets/
