@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CHMBAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e288da75301ac6e75fc5f2e98f37bf29c3af07f0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c3df1197e4860d15120d31af9cb0027f01acfcad")]
 [assembly: System.Reflection.AssemblyProductAttribute("CHMBAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CHMBAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

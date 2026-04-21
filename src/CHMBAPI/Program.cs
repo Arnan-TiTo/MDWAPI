@@ -114,7 +114,8 @@ builder.Services.AddCors(options =>
                      "https://localhost:5001",
                      "https://localhost:5010",
                      "https://liff.line.me",
-                     "https://chicspheremember.vibeandchic.com"
+                     "https://chicspheremember.vibeandchic.com",
+                     "https://shp251.vibeandchic.com"
                      )
         .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
         .AllowAnyHeader()
@@ -171,7 +172,8 @@ app.Use(async (context, next) =>
     var requiresFixedToken =
         path.StartsWithSegments("/api") &&
         !path.StartsWithSegments("/health") &&
-        !path.StartsWithSegments("/swagger");
+        !path.StartsWithSegments("/swagger") &&
+        !path.StartsWithSegments("/api/line/callback");
 
     if (!requiresFixedToken)
     {

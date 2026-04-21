@@ -2,4 +2,38 @@
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
-/.vs/MDWAPI
+# Visual Studio
+/.vs/
+.vs/
+
+# Build output
+**/bin/
+**/obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ASP.NET Core
+**/appsettings.*.local.json
+**/appsettings.Production.json
+**/appsettings.Staging.json
+
+# Secrets & env
+**/.env
+**/.env.*
+**/secrets.json
+
+# Publish output
+**/publish/
+**/out/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
