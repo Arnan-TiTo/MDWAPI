@@ -168,10 +168,19 @@ app.Use(async (context, next) =>
     }
 
     var path = context.Request.Path;
+    var isPublicLineEndpoint =
+        path.StartsWithSegments("/api/line/config") ||
+        path.StartsWithSegments("/api/line/login") ||
+        path.StartsWithSegments("/api/line/callback") ||
+        path.StartsWithSegments("/api/line/auth") ||
+        path.StartsWithSegments("/api/line/webhook") ||
+        path.StartsWithSegments("/api/LineConfig/liff") ||
+        path.StartsWithSegments("/api/member/by-line");
     var requiresFixedToken =
         path.StartsWithSegments("/api") &&
         !path.StartsWithSegments("/health") &&
-        !path.StartsWithSegments("/swagger");
+        !path.StartsWithSegments("/swagger") &&
+        !isPublicLineEndpoint;
 
     if (!requiresFixedToken)
     {

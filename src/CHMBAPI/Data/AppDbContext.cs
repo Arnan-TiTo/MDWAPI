@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<MemberMappingRequest> MemberMappingRequests { get; set; }
     public DbSet<MemberMappingEvidence> MemberMappingEvidences { get; set; }
     public DbSet<LineOaConfig> LineOaConfigs { get; set; }
+    public DbSet<LineMessageInboxEntry> LineMessageInbox { get; set; }
     public DbSet<OrderMemberLink> OrderMemberLinks { get; set; }
 
     // Points System
@@ -317,6 +318,21 @@ public class AppDbContext : DbContext
             entity.Property(e => e.MsgChannelToken).HasMaxLength(500).IsRequired();
             entity.Property(e => e.LiffId).HasMaxLength(50);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        modelBuilder.Entity<LineMessageInboxEntry>(entity =>
+        {
+            entity.ToTable("LineMessageInbox", "mbw");
+            entity.HasKey(e => e.MessageEventId);
+            entity.HasIndex(e => new { e.LineUserId, e.CreatedAt });
+            entity.Property(e => e.LineUserId).HasMaxLength(200).IsRequired();
+            entity.Property(e => e.MessageType).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.ProcessStatus).HasMaxLength(20).HasDefaultValue("New");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasOne(e => e.Member)
+                .WithMany()
+                .HasForeignKey(e => e.MemberId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<TierMaster>(entity =>

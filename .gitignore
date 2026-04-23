@@ -1,5 +1,23 @@
-﻿################################################################################
-# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
-################################################################################
+# Visual Studio / IDE
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
 
-/.vs/MDWAPI
+# .NET build outputs
+**/bin/
+**/obj/
+**/publish/
+**/artifacts/
+TestResults/
+
+# Logs and local runtime files
+*.log
+*.pid
+*.seed
+*.cache
+
+# OS files
+.DS_Store
+Thumbs.db
