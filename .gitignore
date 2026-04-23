@@ -1,4 +1,4 @@
-﻿################################################################################
+################################################################################
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
@@ -9,6 +9,7 @@
 # Build output
 **/bin/
 **/obj/
+**/artifacts/
 
 # User-specific files
 *.user
@@ -34,19 +35,23 @@
 *.log
 logs/
 
+# Local agent/editor metadata
+.claude/
+**/.claude/
+
 # OS
 .DS_Store
 Thumbs.db
 
-# MDWAPI — Seed & data files
+# MDWAPI - Seed & data files
 src/MDWAPI/*.xlsx
 src/MDWAPI/*.xls
 src/MDWAPI/*.csv
 
-# MDWAPI — Label storage (local path)
+# MDWAPI - Label storage (local path)
 Labels/
 
-# MDWAPI — wwwroot build output (frontend dist)
+# MDWAPI - wwwroot build output (frontend dist)
 src/MDWAPI/wwwroot/liff/dist/
 src/MDWAPI/wwwroot/liff/assets/
 src/MDWAPI/wwwroot/member/dist/
