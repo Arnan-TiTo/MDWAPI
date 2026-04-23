@@ -24,6 +24,18 @@ public record UnifiedOrderDto
     public decimal? PaidAmount { get; init; }
     public decimal? RefundAmount { get; init; }
 
+    // Escrow / income breakdown
+    public decimal? EscrowAmount { get; init; }
+    public decimal? BuyerPaidShippingFee { get; init; }
+    public decimal? ActualShippingFee { get; init; }
+    public decimal? PlatformShippingRebate { get; init; }
+    public decimal? CommissionFee { get; init; }
+    public decimal? ServiceFee { get; init; }
+    public decimal? PlatformFee { get; init; }
+    public decimal? PaymentTransactionFee { get; init; }
+    public decimal? AmsCommissionFee { get; init; }
+    public string? SellerVoucherCode { get; init; }
+
     public string? PaymentMethod { get; init; }
     public string? ShipmentProvider { get; init; }
     public string? ShipmentServiceCode { get; init; }

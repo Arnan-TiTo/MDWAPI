@@ -28,5 +28,17 @@ namespace MDWAPI.Models
         public string? PaymentsJson { get; set; }
         public string? ShipmentsJson { get; set; }
         public string? ShipToJson { get; set; }
+
+        // Escrow / income breakdown
+        public decimal? EscrowAmount { get; set; }
+        public decimal? BuyerPaidShippingFee { get; set; }
+        public decimal? ActualShippingFee { get; set; }
+        public decimal? PlatformShippingRebate { get; set; }
+        public decimal? CommissionFee { get; set; }
+        public decimal? ServiceFee { get; set; }
+        public decimal? PlatformFee { get; set; }
+        public decimal? PaymentTransactionFee { get; set; }
+        public decimal? AmsCommissionFee { get; set; }
+        public string? SellerVoucherCode { get; set; }
     }
 }

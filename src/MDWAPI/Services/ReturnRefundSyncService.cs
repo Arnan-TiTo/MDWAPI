@@ -34,7 +34,7 @@ public class ReturnRefundSyncService
     };
 
     /// <summary>
-    /// Sync returns from Shopee for a given shop and time range.
+    /// Sync returns from Shopee for a given shop and time range (update_time).
     /// Shopee API: max 15-day window per call → auto-chunk.
     /// page_no starts at 0 (per Shopee doc).
     /// </summary>
@@ -198,11 +198,16 @@ public class ReturnRefundSyncService
         try
         {
             var orderDetailJson = await _shopeeOrder.GetOrderDetailRawAsync(shopId, orderSn, ct);
-            var nativeOrder = ExtractNativeOrder(orderDetailJson);
+            var (nativeOrder, extractErr) = ExtractNativeOrder(orderDetailJson);
             if (nativeOrder != null)
             {
                 await _writer.UpsertFromShopeeRawAsync(shopId, null, nativeOrder, null, ct);
                 _log.LogInformation("Re-fetched order {OrderSn} before return scan", orderSn);
+            }
+            else
+            {
+                _log.LogWarning("Cannot extract order {OrderSn} before scan: {Reason}", orderSn, extractErr);
+                result.Errors.Add($"re-fetch order {orderSn}: {extractErr}");
             }
         }
         catch (Exception ex)
@@ -329,20 +334,38 @@ public class ReturnRefundSyncService
     }
 
     /// <summary>
-    /// Extract native Shopee order JSON from API response wrapper
+    /// Extract native Shopee order JSON from API response wrapper.
+    /// Returns (json, errorMessage) — errorMessage is non-null when Shopee returns an API-level error or empty list.
     /// </summary>
-    private static string? ExtractNativeOrder(string apiResponse)
+    private static (string? Json, string? Error) ExtractNativeOrder(string apiResponse)
     {
         using var doc = JsonDocument.Parse(apiResponse);
         var root = doc.RootElement;
+
+        // Shopee API-level error (HTTP 200 but error field set)
+        if (root.TryGetProperty("error", out var errEl)
+            && errEl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(errEl.GetString()))
+        {
+            var msg = root.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : errEl.GetString();
+            return (null, $"Shopee API error [{errEl.GetString()}]: {msg}");
+        }
+
         if (root.TryGetProperty("response", out var resp)
             && resp.TryGetProperty("order_list", out var arr)
-            && arr.ValueKind == JsonValueKind.Array
-            && arr.GetArrayLength() > 0)
-            return arr[0].GetRawText();
+            && arr.ValueKind == JsonValueKind.Array)
+        {
+            if (arr.GetArrayLength() > 0)
+                return (arr[0].GetRawText(), null);
+
+            return (null, "order_list is empty — order may not exist or token lacks permission");
+        }
+
+        // bare order object (fallback)
         if (root.TryGetProperty("order_sn", out _))
-            return apiResponse;
-        return null;
+            return (apiResponse, null);
+
+        return (null, $"Unexpected response structure: {apiResponse[..Math.Min(200, apiResponse.Length)]}");
     }
 
     /// <summary>
@@ -489,34 +512,24 @@ public class ReturnRefundSyncService
             try
             {
                 var orderDetailJson = await _shopeeOrder.GetOrderDetailRawAsync(shopId, externalOrderId, ct);
+                var (nativeOrder, extractErr) = ExtractNativeOrder(orderDetailJson);
 
-                // Extract native order from response wrapper
-                string nativeOrder;
-                using var orderDoc = JsonDocument.Parse(orderDetailJson);
-                var orderRoot = orderDoc.RootElement;
-                if (orderRoot.TryGetProperty("response", out var oResp)
-                    && oResp.TryGetProperty("order_list", out var oArr)
-                    && oArr.ValueKind == JsonValueKind.Array
-                    && oArr.GetArrayLength() > 0)
+                if (nativeOrder != null)
                 {
-                    nativeOrder = oArr[0].GetRawText();
-                }
-                else if (orderRoot.TryGetProperty("order_sn", out _))
-                {
-                    nativeOrder = orderDetailJson;
+                    await _writer.UpsertFromShopeeRawAsync(shopId, null, nativeOrder, null, ct);
+                    _log.LogInformation("Re-fetched and updated order {OrderSn} after return sync", externalOrderId);
                 }
                 else
                 {
-                    _log.LogWarning("Cannot extract native order from re-fetch for {OrderSn}", externalOrderId);
-                    return;
+                    _log.LogWarning("Cannot extract order {OrderSn} after return sync: {Reason}", externalOrderId, extractErr);
+                    throw new InvalidOperationException($"order detail: {extractErr}");
                 }
-
-                await _writer.UpsertFromShopeeRawAsync(shopId, null, nativeOrder, null, ct);
-                _log.LogInformation("Re-fetched and updated order {OrderSn} after return sync", externalOrderId);
             }
+            catch (InvalidOperationException) { throw; }
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to re-fetch order {OrderSn} after return sync", externalOrderId);
+                throw;
             }
         }
     }

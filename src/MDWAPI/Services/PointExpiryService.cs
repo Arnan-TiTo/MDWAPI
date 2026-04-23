@@ -167,12 +167,13 @@ public class PointExpiryJobService : BackgroundService
                 var processor = scope.ServiceProvider.GetRequiredService<PointExpiryProcessingService>();
                 await processor.ProcessAsync(stoppingToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "PointExpiryJobService error");
             }
 
-            await Task.Delay(_interval, stoppingToken);
+            try { await Task.Delay(_interval, stoppingToken); }
+            catch (OperationCanceledException) { break; }
         }
     }
 }

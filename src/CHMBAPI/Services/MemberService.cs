@@ -74,7 +74,8 @@ public class MemberService
 
     public async Task<MemberProfileDto> RegisterAsync(MemberRegisterRequest req)
     {
-        int? resolvedCompanysId = req.CompanysId;
+        int? resolvedCompanysId = req.CompanysId > 0 ? req.CompanysId : null;
+        var normalizedLineProviderType = NormalizeLineProviderType(req.LineProviderType);
         if (!string.IsNullOrEmpty(req.LiffId))
         {
             var oaConfig = await _db.LineOaConfigs.FirstOrDefaultAsync(c => c.LiffId == req.LiffId && c.IsActive);
@@ -130,7 +131,7 @@ public class MemberService
                 _db.MemberIdentities.Add(new MemberIdentity
                 {
                     MemberId = member.MemberId,
-                    ProviderType = req.LineProviderType ?? "LINE_OA",
+                    ProviderType = normalizedLineProviderType,
                     ProviderUserKey = req.LineUserId,
                     DisplayName = req.LineDisplayName ?? req.DisplayName ?? member.DisplayName,
                     PictureUrl = req.LinePictureUrl,
@@ -979,6 +980,22 @@ public class MemberService
         if (digits.Length == 9 && !digits.StartsWith("0"))
             digits = "0" + digits;
         return digits;
+    }
+
+    private static string NormalizeLineProviderType(string? providerType)
+    {
+        if (string.IsNullOrWhiteSpace(providerType))
+            return "LINE_OA";
+
+        return providerType.Trim().ToUpperInvariant() switch
+        {
+            "LINE" => "LINE_OA",
+            "LINEOA" => "LINE_OA",
+            "LINE_OA" => "LINE_OA",
+            "LINELOGIN" => "LINE_LOGIN",
+            "LINE_LOGIN" => "LINE_LOGIN",
+            _ => providerType.Trim().ToUpperInvariant()
+        };
     }
 
     private static MemberProfileDto MapToProfile(Member m) => new()

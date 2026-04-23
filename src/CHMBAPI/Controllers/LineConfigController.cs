@@ -17,17 +17,19 @@ public class LineConfigController : ControllerBase
         _config = config;
     }
 
+    /// <summary>ดึงค่า LiffId ตาม Mode (Local/Production) ที่ตั้งไว้ใน appsettings.json</summary>
     [HttpGet("liff")]
     public async Task<IActionResult> GetLiffConfig()
     {
         var mode = _config["LiffSettings:Mode"] ?? "Local";
-
+        
         if (mode.Equals("Local", StringComparison.OrdinalIgnoreCase))
         {
             var liffId = _config["LiffSettings:LocalLiffId"];
             return Ok(new { liffId });
         }
 
+        // Production Mode: ดึงจากฐานข้อมูลตาราง mbw.LineOaConfigs
         var oaConfig = await _db.LineOaConfigs
             .Where(x => x.IsActive)
             .OrderBy(x => x.LineOaConfigId)
@@ -35,7 +37,7 @@ public class LineConfigController : ControllerBase
 
         if (oaConfig == null || string.IsNullOrEmpty(oaConfig.LiffId))
         {
-            return NotFound(new { error = "LINE LIFF configuration was not found for production mode." });
+            return NotFound(new { error = "ไม่พบการตั้งค่า LIFF ในฐานข้อมูลสำหรับโหมด Production" });
         }
 
         return Ok(new { liffId = oaConfig.LiffId });

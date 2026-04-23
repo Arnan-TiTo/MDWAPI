@@ -304,12 +304,13 @@ public class EarnJobService : BackgroundService
                 var processor = scope.ServiceProvider.GetRequiredService<EarnProcessingService>();
                 await processor.ProcessPendingOrdersAsync(stoppingToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "EarnJobService error");
             }
 
-            await Task.Delay(_interval, stoppingToken);
+            try { await Task.Delay(_interval, stoppingToken); }
+            catch (OperationCanceledException) { break; }
         }
     }
 }

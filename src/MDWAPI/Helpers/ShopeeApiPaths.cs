@@ -30,4 +30,7 @@ public static class ShopeeApiPaths
     // ===== Returns / Refund =====
     public const string ReturnsGetList = "/api/v2/returns/get_return_list";
     public const string ReturnsGetDetail = "/api/v2/returns/get_return_detail";
+
+    // ===== Payment / Escrow =====
+    public const string PaymentGetEscrowDetail = "/api/v2/payment/get_escrow_detail";
 }

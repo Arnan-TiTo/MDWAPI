@@ -73,6 +73,23 @@ public class MarketplaceOrdersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// GET /api/market/orders/escrow-detail?shopId=X&amp;orderSn=Y
+    /// ดึง income breakdown จาก Shopee escrow API (เฉพาะ order ที่ชำระแล้ว)
+    /// </summary>
+    [HttpGet("escrow-detail")]
+    public async Task<IActionResult> GetEscrowDetail(
+        [FromQuery] long shopId,
+        [FromQuery] string orderSn,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn))
+            return BadRequest("orderSn is required");
+
+        var json = await _shopee.GetEscrowDetailRawAsync(shopId, orderSn, ct);
+        return Content(json, "application/json");
+    }
+
     // เพิ่ม shopCipher (ใช้เฉพาะ TikTok, ส่งค่าว่างได้)
     [HttpGet("list")]
     public async Task<IActionResult> GetOrderList(

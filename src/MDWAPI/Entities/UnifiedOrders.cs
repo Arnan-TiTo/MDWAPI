@@ -31,6 +31,18 @@ public class UnifiedOrders
     public decimal? PaidAmount { get; set; }
     public decimal? RefundAmount { get; set; }
 
+    // Escrow / income breakdown (จาก platform escrow API)
+    public decimal? EscrowAmount { get; set; }              // รายรับจากคำสั่งซื้อ
+    public decimal? BuyerPaidShippingFee { get; set; }      // ค่าจัดส่งที่ชำระโดยผู้ซื้อ
+    public decimal? ActualShippingFee { get; set; }         // ค่าจัดส่งตามจริง
+    public decimal? PlatformShippingRebate { get; set; }    // ค่าจัดส่งที่ชำระโดย Shopee
+    public decimal? CommissionFee { get; set; }             // ค่าคอมมิชชั่น
+    public decimal? ServiceFee { get; set; }                // ค่าบริการ
+    public decimal? PlatformFee { get; set; }               // ค่าธรรมเนียมโครงสร้างพื้นฐาน
+    public decimal? PaymentTransactionFee { get; set; }     // ค่าธุรกรรมการชำระเงิน
+    public decimal? AmsCommissionFee { get; set; }          // ค่าคอมมิชชั่น AMS
+    [MaxLength(500)] public string? SellerVoucherCode { get; set; }  // โค้ดส่วนลดร้านค้า
+
     [MaxLength(60)] public string? PaymentMethod { get; set; }
     [MaxLength(120)] public string? ShipmentProvider { get; set; }
     [MaxLength(80)] public string? ShipmentServiceCode { get; set; }

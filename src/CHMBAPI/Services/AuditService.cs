@@ -1,15 +1,19 @@
 using CHMBAPI.Data;
 using CHMBAPI.Entities;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 
 namespace CHMBAPI.Services;
 
 public class AuditService
 {
     private readonly AppDbContext _db;
+    private readonly ILogger<AuditService> _logger;
 
-    public AuditService(AppDbContext db)
+    public AuditService(AppDbContext db, ILogger<AuditService> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task LogAsync(string action, string description, string performedBy, long? memberId = null)
@@ -25,7 +29,17 @@ public class AuditService
             UserAgent = null
         };
 
-        _db.AuditLogs.Add(audit);
-        await _db.SaveChangesAsync();
+        try
+        {
+            _db.AuditLogs.Add(audit);
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsMissingAuditTable(ex))
+        {
+            _logger.LogWarning(ex, "Skipping audit log write because mbw.AuditLogs is missing.");
+        }
     }
+
+    private static bool IsMissingAuditTable(Exception ex)
+        => ex.GetBaseException() is SqlException { Number: 208 };
 }

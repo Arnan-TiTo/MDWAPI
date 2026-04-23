@@ -154,13 +154,13 @@ public class ShopeeOrderService
 
     /// <summary>
     /// GET /api/v2/returns/get_return_list
-    /// ดึงรายการ return/refund ตาม create_time range
+    /// ดึงรายการ return/refund ตาม update_time range
     /// status (optional): REQUESTED, ACCEPTED, CANCELLED, JUDGING, PROCESSING, SELLER_DISPUTE, REFUND_PAID, CLOSED
     /// </summary>
     public async Task<string> GetReturnListRawAsync(
         long shopId,
-        long createTimeFrom,
-        long createTimeTo,
+        long updateTimeFrom,
+        long updateTimeTo,
         int pageNo = 1,
         int pageSize = 50,
         string? status = null,
@@ -168,8 +168,8 @@ public class ShopeeOrderService
     {
         var query = new Dictionary<string, string?>
         {
-            ["create_time_from"] = createTimeFrom.ToString(),
-            ["create_time_to"] = createTimeTo.ToString(),
+            ["update_time_from"] = updateTimeFrom.ToString(),
+            ["update_time_to"] = updateTimeTo.ToString(),
             ["page_no"] = pageNo.ToString(),
             ["page_size"] = pageSize.ToString()
         };
@@ -385,6 +385,31 @@ public class ShopeeOrderService
             throw new HttpRequestException($"Shopee handle_buyer_cancellation failed: {(int)res.StatusCode}");
         }
         return text;
+    }
+
+    /// <summary>
+    /// GET /api/v2/payment/get_escrow_detail
+    /// ดึง income breakdown (commission, service_fee, escrow_amount ฯลฯ) ของ order ที่ชำระแล้ว
+    /// </summary>
+    public async Task<string> GetEscrowDetailRawAsync(long shopId, string orderSn, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn))
+            throw new ArgumentException("orderSn is required", nameof(orderSn));
+
+        var (url, http) = await BuildSignedGetAsync(
+            apiPath: ShopeeApiPaths.PaymentGetEscrowDetail,
+            shopId: shopId,
+            extraQuery: new() { ["order_sn"] = orderSn },
+            ct: ct);
+
+        var res = await http.GetAsync(url, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Shopee get_escrow_detail failed: {Status} {Body}", res.StatusCode, body);
+            throw new HttpRequestException($"Shopee get_escrow_detail failed: {(int)res.StatusCode}");
+        }
+        return body;
     }
 
     /// <summary>

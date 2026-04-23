@@ -111,12 +111,13 @@ public class PointMaturationJobService : BackgroundService
                 var processor = scope.ServiceProvider.GetRequiredService<PointMaturationProcessingService>();
                 await processor.ProcessAsync(stoppingToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "PointMaturationJobService error");
             }
 
-            await Task.Delay(_interval, stoppingToken);
+            try { await Task.Delay(_interval, stoppingToken); }
+            catch (OperationCanceledException) { break; }
         }
     }
 }

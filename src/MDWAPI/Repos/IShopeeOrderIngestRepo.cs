@@ -9,6 +9,7 @@ namespace MDWAPI.Repos;
 public interface IShopeeOrderIngestRepo
 {
     Task UpsertOrderWithItemsAsync(long shopId, JsonElement order, CancellationToken ct);
+    Task UpsertEscrowAsync(string orderSn, JsonElement escrowRoot, CancellationToken ct);
 }
 
 public class ShopeeOrderIngestRepo : IShopeeOrderIngestRepo
@@ -205,6 +206,66 @@ VALUES
                         cancellationToken: ct));
                 }
             }
+        }
+        finally
+        {
+            if (needClose) await conn.CloseAsync();
+        }
+    }
+
+    public async Task UpsertEscrowAsync(string orderSn, JsonElement escrowRoot, CancellationToken ct)
+    {
+        // escrowRoot = response.order_income object จาก Shopee escrow API
+        static decimal? Dec(JsonElement root, string key)
+            => root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
+                ? v.GetDecimal() : (decimal?)null;
+
+        static string? Str(JsonElement root, string key)
+        {
+            if (!root.TryGetProperty(key, out var v)) return null;
+            if (v.ValueKind == JsonValueKind.String) return v.GetString();
+            if (v.ValueKind == JsonValueKind.Array)
+            {
+                var codes = v.EnumerateArray().Select(x => x.GetString()).Where(x => x != null);
+                return string.Join(",", codes);
+            }
+            return null;
+        }
+
+        var conn = _db.Database.GetDbConnection();
+        var needClose = conn.State != ConnectionState.Open;
+        if (needClose) await conn.OpenAsync(ct);
+        try
+        {
+            const string sql = @"
+UPDATE mdw.ShopeeOrders SET
+    EscrowAmount           = @EscrowAmount,
+    BuyerPaidShippingFee   = @BuyerPaidShippingFee,
+    ActualShippingFee      = @ActualShippingFee,
+    PlatformShippingRebate = @PlatformShippingRebate,
+    CommissionFee          = @CommissionFee,
+    ServiceFee             = @ServiceFee,
+    PlatformFee            = @PlatformFee,
+    PaymentTransactionFee  = @PaymentTransactionFee,
+    AmsCommissionFee       = @AmsCommissionFee,
+    SellerVoucherCode      = @SellerVoucherCode,
+    EscrowUpdatedAt        = SYSUTCDATETIME()
+WHERE OrderSn = @OrderSn;";
+
+            await conn.ExecuteAsync(new CommandDefinition(sql, new
+            {
+                OrderSn                = orderSn,
+                EscrowAmount           = Dec(escrowRoot, "escrow_amount"),
+                BuyerPaidShippingFee   = Dec(escrowRoot, "buyer_paid_shipping_fee"),
+                ActualShippingFee      = Dec(escrowRoot, "actual_shipping_fee"),
+                PlatformShippingRebate = Dec(escrowRoot, "shopee_shipping_rebate"),
+                CommissionFee          = Dec(escrowRoot, "commission_fee"),
+                ServiceFee             = Dec(escrowRoot, "service_fee"),
+                PlatformFee            = Dec(escrowRoot, "platform_fee"),
+                PaymentTransactionFee  = Dec(escrowRoot, "seller_transaction_fee"),
+                AmsCommissionFee       = Dec(escrowRoot, "ams_commission_fee"),
+                SellerVoucherCode      = Str(escrowRoot, "seller_voucher_code")
+            }, cancellationToken: ct));
         }
         finally
         {

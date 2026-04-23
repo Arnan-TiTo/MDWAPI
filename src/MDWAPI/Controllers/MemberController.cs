@@ -101,8 +101,11 @@ public class MemberController : ControllerBase
     public async Task<IActionResult> GetByLineUserId(string lineUserId)
     {
         var result = await _memberService.GetByLineUserIdAsync(lineUserId);
-        if (result == null) return NotFound(new { error = "Member not found for this LINE user" });
-        return Ok(result);
+        return Ok(new
+        {
+            exists = result != null,
+            member = result
+        });
     }
 
     /// <summary>ดูยอดแต้ม</summary>

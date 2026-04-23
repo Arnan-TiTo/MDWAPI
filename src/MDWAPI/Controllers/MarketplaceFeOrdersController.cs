@@ -33,7 +33,18 @@ namespace MDWAPI.Controllers
             string? ItemsJson,
             string? PaymentsJson,
             string? ShipmentsJson,
-            string? ShipToJson
+            string? ShipToJson,
+            // Escrow / income breakdown
+            decimal? EscrowAmount,
+            decimal? BuyerPaidShippingFee,
+            decimal? ActualShippingFee,
+            decimal? PlatformShippingRebate,
+            decimal? CommissionFee,
+            decimal? ServiceFee,
+            decimal? PlatformFee,
+            decimal? PaymentTransactionFee,
+            decimal? AmsCommissionFee,
+            string? SellerVoucherCode
         );
 
         public sealed record PagedResult<T>(
@@ -134,7 +145,17 @@ namespace MDWAPI.Controllers
                     o.ItemsJson,
                     o.PaymentsJson,
                     o.ShipmentsJson,
-                    o.ShipToJson
+                    o.ShipToJson,
+                    o.EscrowAmount,
+                    o.BuyerPaidShippingFee,
+                    o.ActualShippingFee,
+                    o.PlatformShippingRebate,
+                    o.CommissionFee,
+                    o.ServiceFee,
+                    o.PlatformFee,
+                    o.PaymentTransactionFee,
+                    o.AmsCommissionFee,
+                    o.SellerVoucherCode
                 ))
                 .ToListAsync(ct);
 
@@ -168,7 +189,17 @@ namespace MDWAPI.Controllers
                     x.ItemsJson,
                     x.PaymentsJson,
                     x.ShipmentsJson,
-                    x.ShipToJson
+                    x.ShipToJson,
+                    x.EscrowAmount,
+                    x.BuyerPaidShippingFee,
+                    x.ActualShippingFee,
+                    x.PlatformShippingRebate,
+                    x.CommissionFee,
+                    x.ServiceFee,
+                    x.PlatformFee,
+                    x.PaymentTransactionFee,
+                    x.AmsCommissionFee,
+                    x.SellerVoucherCode
                 ))
                 .SingleOrDefaultAsync(ct);
 
@@ -201,7 +232,17 @@ namespace MDWAPI.Controllers
                     x.ItemsJson,
                     x.PaymentsJson,
                     x.ShipmentsJson,
-                    x.ShipToJson
+                    x.ShipToJson,
+                    x.EscrowAmount,
+                    x.BuyerPaidShippingFee,
+                    x.ActualShippingFee,
+                    x.PlatformShippingRebate,
+                    x.CommissionFee,
+                    x.ServiceFee,
+                    x.PlatformFee,
+                    x.PaymentTransactionFee,
+                    x.AmsCommissionFee,
+                    x.SellerVoucherCode
                 ))
                 .SingleOrDefaultAsync(ct);
 
