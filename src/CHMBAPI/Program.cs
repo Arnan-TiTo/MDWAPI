@@ -16,8 +16,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-//    ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
- ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+    // ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+       ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 builder.Services.AddDbContext<AppDbContext>(
     opt => opt.UseSqlServer(conn),
@@ -114,7 +114,8 @@ builder.Services.AddCors(options =>
                      "https://localhost:5001",
                      "https://localhost:5010",
                      "https://liff.line.me",
-                     "https://chicspheremember.vibeandchic.com"
+                     "https://chicspheremember.vibeandchic.com",
+                     "https://shp251.vibeandchic.com"
                      )
         .WithMethods("POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS")
         .AllowAnyHeader()
