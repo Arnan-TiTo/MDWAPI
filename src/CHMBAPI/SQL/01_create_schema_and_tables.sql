@@ -136,6 +136,7 @@ CREATE TABLE mbw.Members (
     MemberId            BIGINT          NOT NULL IDENTITY(1,1),
     MemberCode          NVARCHAR(50)    NOT NULL,
     DisplayName         NVARCHAR(200)   NULL,
+    NamePrefix          NVARCHAR(50)    NULL,
     Phone               NVARCHAR(20)    NULL,
     Email               NVARCHAR(200)   NULL,
     MemberType          NVARCHAR(50)    NULL,
@@ -176,6 +177,10 @@ CREATE TABLE mbw.Members (
 CREATE INDEX IX_Members_Phone ON mbw.Members (Phone) WHERE Phone IS NOT NULL;
 CREATE INDEX IX_Members_Email ON mbw.Members (Email) WHERE Email IS NOT NULL;
 CREATE INDEX IX_Members_Status ON mbw.Members (Status);
+GO
+
+IF COL_LENGTH('mbw.Members', 'NamePrefix') IS NULL
+    ALTER TABLE mbw.Members ADD NamePrefix NVARCHAR(50) NULL;
 GO
 
 -- ============================================================

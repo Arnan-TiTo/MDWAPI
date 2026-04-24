@@ -75,11 +75,11 @@ public class ThailandAddressSeedService
             // Mapping based on your screenshot
             string? GetCol(params string[] aliases) => aliases.FirstOrDefault(a => colMap.ContainsKey(a));
             
-            string colPostcode = GetCol("PostCode", "postcode");
-            string colTambonId = GetCol("TambonID", "tambonid");
-            string colSubDistrict = GetCol("TambonThaiShort", "tambonthaishort");
-            string colDistrict = GetCol("DistrictThaiShort", "districtthaishort", "districttahshort");
-            string colProvince = GetCol("ProvinceThai", "provinceThai", "ptovinceThai");
+            string? colPostcode = GetCol("PostCode", "postcode");
+            string? colTambonId = GetCol("TambonID", "tambonid");
+            string? colSubDistrict = GetCol("TambonThaiShort", "tambonthaishort");
+            string? colDistrict = GetCol("DistrictThaiShort", "districtthaishort", "districttahshort");
+            string? colProvince = GetCol("ProvinceThai", "provinceThai", "ptovinceThai");
 
             if (colPostcode == null || colTambonId == null || colSubDistrict == null || colDistrict == null || colProvince == null)
             {

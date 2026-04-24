@@ -21,6 +21,8 @@ public class MarketplaceLogisticsController : ControllerBase
     private readonly IShopRepo _shopRepo;
     private readonly IPartnerRepo _partnerRepo;
     private readonly IChannelTokenRepo _chanRepo;
+    private readonly IUnifiedOrderLabelDocumentRepo _labelDocRepo;
+    private readonly OcrService _ocr;
     private readonly IMemoryCache _cache;
     private readonly ILogger<MarketplaceLogisticsController> _log;
 
@@ -32,6 +34,8 @@ public class MarketplaceLogisticsController : ControllerBase
         IShopRepo shopRepo,
         IPartnerRepo partnerRepo,
         IChannelTokenRepo chanRepo,
+        IUnifiedOrderLabelDocumentRepo labelDocRepo,
+        OcrService ocr,
         IMemoryCache cache,
         ILogger<MarketplaceLogisticsController> log)
     {
@@ -42,6 +46,8 @@ public class MarketplaceLogisticsController : ControllerBase
         _shopRepo = shopRepo;
         _partnerRepo = partnerRepo;
         _chanRepo = chanRepo;
+        _labelDocRepo = labelDocRepo;
+        _ocr = ocr;
         _cache = cache;
         _log = log;
     }
@@ -170,6 +176,148 @@ public class MarketplaceLogisticsController : ControllerBase
 
         var json = await _shopee.GetShippingParameterAsync(shopId, orderSn, ct);
         return Content(json, "application/json");
+    }
+
+    /// <summary>
+    /// GET /api/market/logistics/shopee/shipping-doc-data-info
+    /// Fetch จาก Shopee, UPSERT ลง DB แล้ว return ข้อมูลทุก field จาก mdw.UnifiedOrderLabelDocument
+    /// </summary>
+    [HttpGet("shopee/shipping-doc-data-info")]
+    public async Task<IActionResult> GetShopeeShippingDocDataInfo(
+        [FromQuery] long shopId,
+        [FromQuery] string orderSn,
+        [FromQuery] string? trackingNumber,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn)) return BadRequest("orderSn is required");
+
+        await RefreshTokenIfNeededAsync("Shopee", shopId, ct);
+
+        try
+        {
+            await _shopee.GetShippingDocumentDataInfoAsync(shopId, orderSn, trackingNumber, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode.HasValue)
+        {
+            return StatusCode((int)ex.StatusCode.Value, new { error = ex.Message });
+        }
+
+        var records = await _labelDocRepo.GetByOrderSnAsync("Shopee", shopId, orderSn, ct);
+        return Ok(records);
+    }
+
+    /// <summary>
+    /// GET /api/market/logistics/shopee/shipping-doc-data-info/stored
+    /// ดึงข้อมูลที่เก็บไว้ใน DB โดยไม่ call Shopee
+    /// </summary>
+    [HttpGet("shopee/shipping-doc-data-info/stored")]
+    public async Task<IActionResult> GetStoredShippingDocDataInfo(
+        [FromQuery] long shopId,
+        [FromQuery] string orderSn,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn)) return BadRequest("orderSn is required");
+
+        var records = await _labelDocRepo.GetByOrderSnAsync("Shopee", shopId, orderSn, ct);
+        if (records.Count == 0) return NotFound(new { message = "No stored data. Call shipping-doc-data-info first." });
+        return Ok(records);
+    }
+
+    /// <summary>
+    /// POST /api/market/logistics/shopee/shipping-doc-data-info/ingest
+    /// ส่ง Shopee get_shipping_document_data_info response เข้ามาโดยตรง (ไม่ call Shopee)
+    /// UPSERT ลง DB แล้ว return ข้อมูลจาก mdw.UnifiedOrderLabelDocument — ใช้สำหรับทดสอบ / sandbox
+    /// Body: { "response": { ...shopee response... } }  หรือส่ง response object ตรงๆ ก็ได้
+    /// </summary>
+    [HttpPost("shopee/shipping-doc-data-info/ingest")]
+    public async Task<IActionResult> IngestShippingDocDataInfo(
+        [FromQuery] long shopId,
+        [FromQuery] string orderSn,
+        [FromQuery] string? packageNumber,
+        [FromBody] JsonElement body,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn)) return BadRequest("orderSn is required");
+
+        var response = body.TryGetProperty("response", out var r) ? r : body;
+
+        await _labelDocRepo.UpsertAsync("Shopee", shopId, orderSn, packageNumber, response, ct);
+
+        var records = await _labelDocRepo.GetByOrderSnAsync("Shopee", shopId, orderSn, ct);
+        return Ok(records);
+    }
+
+    /// <summary>
+    /// POST /api/market/logistics/shopee/decode-label-response
+    /// Test endpoint: ส่ง Shopee get_shipping_document_data_info response เข้ามา
+    /// ใช้ Tesseract OCR ถอด text จาก image ใน recipient_address_info / sender_address_info
+    /// ไม่ save ลง DB — ใช้สำหรับทดสอบเท่านั้น
+    /// </summary>
+    [HttpPost("shopee/decode-label-response")]
+    public IActionResult DecodeLabelResponse([FromBody] JsonElement body)
+    {
+        if (!_ocr.IsTessdataReady())
+            return StatusCode(503, new
+            {
+                error = "tessdata_not_ready",
+                message = "วาง .traineddata files ใน tessdata/ folder ก่อน เช่น chi_tra.traineddata, eng.traineddata"
+            });
+
+        var result = new Dictionary<string, object?>();
+
+        // รองรับทั้ง full response และ response wrapper
+        var response = body.TryGetProperty("response", out var r) ? r : body;
+
+        if (response.TryGetProperty("recipient_address_info", out var rai) && rai.ValueKind == JsonValueKind.Array)
+            result["recipient_address_info"] = OcrAddressInfoArray(rai);
+
+        if (response.TryGetProperty("sender_address_info", out var sai) && sai.ValueKind == JsonValueKind.Array)
+            result["sender_address_info"] = OcrAddressInfoArray(sai);
+
+        // qrcode plain text ไม่ต้อง OCR — เป็น string ตรงๆ อยู่แล้ว
+        if (response.TryGetProperty("shipping_document_info", out var sdi) &&
+            sdi.TryGetProperty("third_party_logistic_info", out var tpli) &&
+            tpli.TryGetProperty("qrcode", out var qr) && qr.ValueKind != JsonValueKind.Null)
+        {
+            result["qr_code_data"] = qr.GetString();
+        }
+
+        if (result.Count == 0)
+            return BadRequest(new { message = "No recipient_address_info / sender_address_info / qrcode found." });
+
+        return Ok(result);
+    }
+
+    private List<object> OcrAddressInfoArray(JsonElement array)
+    {
+        var list = new List<object>();
+        foreach (var item in array.EnumerateArray())
+        {
+            string? key = item.TryGetProperty("key", out var k) ? k.GetString() : null;
+            string? decoded = null;
+            string status;
+
+            if (item.TryGetProperty("image", out var img) && img.ValueKind != JsonValueKind.Null)
+            {
+                var raw = img.GetString();
+                if (!string.IsNullOrEmpty(raw))
+                {
+                    decoded = _ocr.OcrDataUrl(raw);
+                    status = string.IsNullOrEmpty(decoded) ? "ocr_failed" : "ok";
+                }
+                else
+                {
+                    status = "image_empty";
+                }
+            }
+            else
+            {
+                status = "no_image";
+            }
+
+            list.Add(new { key, decoded_text = decoded, status });
+        }
+        return list;
     }
 
     // ====== Token Refresh — auto-resolve partnersId/env จาก shopId ======

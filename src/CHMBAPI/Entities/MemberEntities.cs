@@ -10,6 +10,7 @@ public class Members_Mbw
 
     [Required, MaxLength(50)] public string MemberCode { get; set; } = default!;
     [MaxLength(200)] public string? DisplayName { get; set; }
+    [MaxLength(50)] public string? NamePrefix { get; set; }
     [MaxLength(20)] public string? Phone { get; set; }
     [MaxLength(200)] public string? Email { get; set; }
     [MaxLength(50)] public string? MemberType { get; set; }

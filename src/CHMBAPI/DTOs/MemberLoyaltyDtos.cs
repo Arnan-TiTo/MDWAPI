@@ -4,6 +4,7 @@ namespace CHMBAPI.DTOs;
 public class MemberRegisterRequest
 {
     public string? DisplayName { get; set; }
+    public string? NamePrefix { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public DateTime? BirthDate { get; set; }
@@ -97,6 +98,7 @@ public class MemberProfileDto
     public long MemberId { get; set; }
     public string MemberCode { get; set; } = default!;
     public string? DisplayName { get; set; }
+    public string? NamePrefix { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string? Phone { get; set; }
@@ -185,6 +187,7 @@ public class MemberSummaryWithStatsDto
 public class MemberUpdateProfileRequest
 {
     public string? DisplayName { get; set; }
+    public string? NamePrefix { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public string? Phone { get; set; }

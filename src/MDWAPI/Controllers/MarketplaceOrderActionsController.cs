@@ -526,14 +526,6 @@ public class MarketplaceOrderActionsController : ControllerBase
             default:
                 return BadRequest(new { message = "Unsupported platform for process-shipment." });
         }
-
-        return Ok(new
-        {
-            message = "Shipment processed successfully.",
-            orderRef = req.OrderRef,
-            platform = req.Platform.ToString(),
-            platformResponse = TryParseJson(platformResponse)
-        });
     }
 
     // ====== 2) Create Label ======

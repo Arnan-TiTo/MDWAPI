@@ -36,7 +36,13 @@ public class AuditService
         }
         catch (DbUpdateException ex) when (IsMissingAuditTable(ex))
         {
+            _db.Entry(audit).State = EntityState.Detached;
             _logger.LogWarning(ex, "Skipping audit log write because mbw.AuditLogs is missing.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.Entry(audit).State = EntityState.Detached;
+            _logger.LogWarning(ex, "Skipping audit log write because audit logging failed.");
         }
     }
 

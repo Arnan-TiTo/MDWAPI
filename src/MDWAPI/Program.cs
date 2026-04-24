@@ -19,8 +19,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-    //  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
- ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+ //?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 
 
@@ -70,8 +70,10 @@ builder.Services.AddHttpClient<TikTokAuthService>();
 
 builder.Services.AddScoped<ShopeeTokenRefreshService>();
 builder.Services.AddScoped<IShopeeOrderIngestRepo, ShopeeOrderIngestRepo>();
+builder.Services.AddScoped<IUnifiedOrderLabelDocumentRepo, UnifiedOrderLabelDocumentRepo>();
 builder.Services.AddScoped<ShopeeOrderIngestService>();
 
+builder.Services.AddScoped<OcrService>();
 builder.Services.AddScoped<ShopeeLogisticsService>();
 builder.Services.AddScoped<LazadaLogisticsService>();
 builder.Services.AddScoped<TiktokLogisticsService>();
@@ -263,35 +265,39 @@ var app = builder.Build();
 //// seed admin
 using (var scope = app.Services.CreateScope())
 {
-    Console.WriteLine("**************************************************");
-    Console.WriteLine("DEBUG: ENTERING SEED SCOPE");
-    Console.WriteLine("**************************************************");
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
-
-    if (!db.Users.Any(u => u.Username == "admin"))
+    try
     {
-        db.Users.Add(new User
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.Database.EnsureCreated();
+
+        if (!db.Users.Any(u => u.Username == "admin"))
         {
-            Username = "admin",
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("123456yjm")
-        });
-        db.SaveChanges();
+            db.Users.Add(new User
+            {
+                Username = "admin",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("123456yjm")
+            });
+            db.SaveChanges();
+        }
+
+        if (builder.Configuration.GetValue<bool>("SeedSettings:RunOnStartup"))
+        {
+            try
+            {
+                var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
+                addressSeed.SeedAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WARN] Address seeding failed: {ex.Message}");
+            }
+        }
     }
-
-    if (builder.Configuration.GetValue<bool>("SeedSettings:RunOnStartup"))
+    catch (Exception ex)
     {
-        try 
-        {
-            var addressSeed = scope.ServiceProvider.GetRequiredService<ThailandAddressSeedService>();
-            addressSeed.SeedAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[CRITICAL ERROR] Address Seeding Failed: {ex.Message}");
-        }
+        Console.WriteLine($"[WARN] DB seed skipped (DB not reachable): {ex.Message}");
     }
 }
 
@@ -326,5 +332,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var urls = string.Join(" | ", app.Urls);
+    Console.WriteLine($"[MDWAPI] env={app.Environment.EnvironmentName} | {urls}");
+});
 
 app.Run();

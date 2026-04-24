@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<UnifiedOrderAddresses> UnifiedOrderAddresses => Set<UnifiedOrderAddresses>();
     public DbSet<VUnifiedOrder> VUnifiedOrders => Set<VUnifiedOrder>();
     public DbSet<UnifiedOrderLabel> UnifiedOrderLabels => Set<UnifiedOrderLabel>();
+    public DbSet<UnifiedOrderLabelDocument> UnifiedOrderLabelDocuments => Set<UnifiedOrderLabelDocument>();
     public DbSet<UnifiedReturns> UnifiedReturns => Set<UnifiedReturns>();
 
     // --views ADW-- 
@@ -229,6 +230,16 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => new { x.Channel, x.OrderExternalNo });
             e.Property(x => x.CreatedDate).HasDefaultValueSql("SYSUTCDATETIME()");
+        });
+
+        modelBuilder.Entity<UnifiedOrderLabelDocument>(e =>
+        {
+            e.ToTable("UnifiedOrderLabelDocument", "mdw");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.OrderSn);
+            e.Property(x => x.FetchedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            e.Property(x => x.BillingWeight).HasPrecision(18, 4);
+            e.Property(x => x.CodAmount).HasPrecision(18, 2);
         });
 
         modelBuilder.Entity<VUnifiedOrder>(e =>

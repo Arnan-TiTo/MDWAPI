@@ -12,6 +12,7 @@ public class ShopeeLogisticsService
     private readonly IPartnerRepo _partnerRepo;
     private readonly ChannelTokenResolver _resolver;
     private readonly ShopeeOrderService _orderService;
+    private readonly IUnifiedOrderLabelDocumentRepo _labelDocRepo;
     private readonly ILogger<ShopeeLogisticsService> _log;
 
     public ShopeeLogisticsService(
@@ -20,6 +21,7 @@ public class ShopeeLogisticsService
         IPartnerRepo partnerRepo,
         ChannelTokenResolver resolver,
         ShopeeOrderService orderService,
+        IUnifiedOrderLabelDocumentRepo labelDocRepo,
         ILogger<ShopeeLogisticsService> log)
     {
         _httpFactory = httpFactory;
@@ -27,6 +29,7 @@ public class ShopeeLogisticsService
         _partnerRepo = partnerRepo;
         _resolver = resolver;
         _orderService = orderService;
+        _labelDocRepo = labelDocRepo;
         _log = log;
     }
 
@@ -302,6 +305,41 @@ public class ShopeeLogisticsService
         var body = await res.Content.ReadAsStringAsync(ct);
         res.EnsureSuccessStatusCode();
         return body;
+    }
+
+    /// <summary>
+    /// logistics/get_shipping_document_data_info (GET)
+    /// Fetch จาก Shopee → UPSERT ลง mdw.UnifiedOrderLabelDocument → return result_list
+    /// Required: order_sn — Optional: tracking_number
+    /// </summary>
+    public async Task<JsonElement> GetShippingDocumentDataInfoAsync(long shopId, string orderSn, string? trackingNumber = null, CancellationToken ct = default)
+    {
+        var query = new Dictionary<string, string?> { ["order_sn"] = orderSn };
+        if (!string.IsNullOrEmpty(trackingNumber))
+            query["tracking_number"] = trackingNumber;
+
+        var (url, http) = await BuildSignedGetAsync(
+            apiPath: ShopeeApiPaths.LogiGetShippingDocDataInfo,
+            shopId: shopId,
+            extraQuery: query,
+            ct);
+
+        var res = await http.GetAsync(url, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+        if (!res.IsSuccessStatusCode)
+            throw new HttpRequestException($"Shopee {(int)res.StatusCode}: {body}", null, res.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement.Clone();
+
+        // UPSERT: response contains shipping_document_info + recipient_address_info
+        if (root.TryGetProperty("response", out var resp))
+        {
+            try { await _labelDocRepo.UpsertAsync("Shopee", shopId, orderSn, null, resp, ct); }
+            catch (Exception ex) { _log.LogWarning(ex, "UpsertLabelDocument failed for {OrderSn}", orderSn); }
+        }
+
+        return root;
     }
 
     /// <summary>

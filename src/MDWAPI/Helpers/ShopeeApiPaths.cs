@@ -25,6 +25,7 @@ public static class ShopeeApiPaths
     public const string LogiGetShippingDocParam = "/api/v2/logistics/get_shipping_document_parameter";
     public const string LogiCreateShippingDoc = "/api/v2/logistics/create_shipping_document";
     public const string LogiGetDocResult = "/api/v2/logistics/get_shipping_document_result";
+    public const string LogiGetShippingDocDataInfo = "/api/v2/logistics/get_shipping_document_data_info";
     public const string LogiDownloadDoc = "/api/v2/logistics/download_shipping_document";
 
     // ===== Returns / Refund =====

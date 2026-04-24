@@ -38,6 +38,7 @@ public class AppDbContext : DbContext
     // Masters
     public DbSet<MemberChannel> MemberChannels { get; set; }
     public DbSet<RegistrationProductOption> RegistrationProductOptions { get; set; }
+    public DbSet<ThailandAddress> ThailandAddresses { get; set; }
 
     // Forms & Consent
     public DbSet<MemberRegistrationAnswer> MemberRegistrationAnswers { get; set; }
@@ -69,6 +70,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Status);
             entity.Property(e => e.MemberCode).HasMaxLength(50).IsRequired();
             entity.Property(e => e.DisplayName).HasMaxLength(200);
+            entity.Property(e => e.NamePrefix).HasMaxLength(50);
             entity.Property(e => e.Phone).HasMaxLength(20);
             entity.Property(e => e.Email).HasMaxLength(200);
             entity.Property(e => e.MemberType).HasMaxLength(50);
@@ -443,6 +445,7 @@ public class AppDbContext : DbContext
         // AuditLog configuration
         modelBuilder.Entity<AuditLog>(entity =>
         {
+            entity.ToTable("AuditLogs", "mbw");
             entity.HasKey(e => e.AuditId);
             entity.Property(e => e.Action).HasMaxLength(100).IsRequired();
             entity.Property(e => e.Description).HasMaxLength(1000);

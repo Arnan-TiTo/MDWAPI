@@ -100,12 +100,13 @@ public class MemberService
         {
             var now = DateTime.UtcNow;
             var memberCode = $"MBW-{now:yyMMdd}-{now.Ticks % 1000000:D6}";
-            var memberDisplayName = req.DisplayName ?? $"{req.FirstName} {req.LastName}".Trim();
+            var memberDisplayName = req.DisplayName ?? BuildDisplayName(req.NamePrefix, req.FirstName, req.LastName);
 
             var member = new Member
             {
                 MemberCode = memberCode,
                 DisplayName = memberDisplayName,
+                NamePrefix = req.NamePrefix,
                 FirstName = req.FirstName,
                 LastName = req.LastName,
                 Phone = req.Phone,
@@ -288,6 +289,7 @@ public class MemberService
             ?? throw new KeyNotFoundException($"Member {memberId} not found");
 
         if (req.DisplayName != null) member.DisplayName = req.DisplayName;
+        if (req.NamePrefix != null) member.NamePrefix = req.NamePrefix;
         if (req.FirstName != null) member.FirstName = req.FirstName;
         if (req.LastName != null) member.LastName = req.LastName;
         if (req.Phone != null) member.Phone = req.Phone;
@@ -1003,6 +1005,7 @@ public class MemberService
         MemberId = m.MemberId,
         MemberCode = m.MemberCode,
         DisplayName = m.DisplayName,
+        NamePrefix = m.NamePrefix,
         Phone = m.Phone,
         Email = m.Email,
         Status = m.Status,
@@ -1051,4 +1054,14 @@ public class MemberService
             IsPrimary = p.IsPrimary
         }).ToList()
     };
+
+    private static string? BuildDisplayName(string? namePrefix, string? firstName, string? lastName)
+    {
+        var parts = new[] { namePrefix, firstName, lastName }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim());
+
+        var displayName = string.Join(" ", parts);
+        return string.IsNullOrWhiteSpace(displayName) ? null : displayName;
+    }
 }

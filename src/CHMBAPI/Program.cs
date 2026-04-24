@@ -16,8 +16,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-    // ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
-       ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+      ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+   //?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
 
 builder.Services.AddDbContext<AppDbContext>(
     opt => opt.UseSqlServer(conn),
@@ -133,6 +133,60 @@ using (var scope = app.Services.CreateScope())
     Console.WriteLine("***** CHMBAPI - Member Loyalty Service Starting *****");
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
+    try
+    {
+        db.Database.ExecuteSqlRaw("""
+            IF SCHEMA_ID(N'mbw') IS NULL
+                EXEC(N'CREATE SCHEMA mbw');
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.tables t
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE s.name = N'mbw' AND t.name = N'AuditLogs'
+            )
+            BEGIN
+                CREATE TABLE mbw.AuditLogs (
+                    AuditId BIGINT NOT NULL IDENTITY(1,1),
+                    Action NVARCHAR(100) NOT NULL,
+                    Description NVARCHAR(1000) NULL,
+                    PerformedBy NVARCHAR(100) NOT NULL,
+                    MemberId BIGINT NULL,
+                    PerformedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    IpAddress NVARCHAR(45) NULL,
+                    UserAgent NVARCHAR(500) NULL,
+                    CONSTRAINT PK_AuditLogs PRIMARY KEY (AuditId)
+                );
+            END;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.indexes
+                WHERE name = N'IX_AuditLogs_PerformedAt'
+                  AND object_id = OBJECT_ID(N'mbw.AuditLogs')
+            )
+                CREATE INDEX IX_AuditLogs_PerformedAt ON mbw.AuditLogs (PerformedAt);
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM sys.indexes
+                WHERE name = N'IX_AuditLogs_MemberId'
+                  AND object_id = OBJECT_ID(N'mbw.AuditLogs')
+            )
+                CREATE INDEX IX_AuditLogs_MemberId ON mbw.AuditLogs (MemberId) WHERE MemberId IS NOT NULL;
+            """);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[AUDIT BOOTSTRAP WARNING] Could not ensure mbw.AuditLogs: {ex.Message}");
+    }
+
+    db.Database.ExecuteSqlRaw("""
+        IF COL_LENGTH('mbw.Members', 'NamePrefix') IS NULL
+        BEGIN
+            ALTER TABLE mbw.Members ADD NamePrefix NVARCHAR(50) NULL;
+        END
+        """);
 }
 
 if (app.Environment.IsDevelopment())
