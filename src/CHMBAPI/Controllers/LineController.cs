@@ -7,7 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CHMBAPI.Controllers;
 
+<<<<<<< HEAD
 /// <summary>LINE Login OAuth + Webhook endpoints</summary>
+=======
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
 [ApiController]
 [Route("api/line")]
 [Tags("LINE Integration")]
@@ -33,6 +36,7 @@ public class LineController : ControllerBase
         _logger = logger;
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════
     // Public Config (no auth — LIFF ID is not secret)
     // ═══════════════════════════════════════════════
@@ -45,6 +49,8 @@ public class LineController : ControllerBase
     /// GET /api/line/config?domain=shop.vibeandchic.com
     /// ถ้าไม่ส่ง param = ใช้ตัวแรกที่ active (backward compat)
     /// </summary>
+=======
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     [HttpGet("config")]
     public async Task<IActionResult> GetConfig(
         [FromQuery] int? companyId = null,
@@ -54,18 +60,33 @@ public class LineController : ControllerBase
         var query = _db.LineOaConfigs.Where(c => c.IsActive);
 
         if (companyId.HasValue)
+<<<<<<< HEAD
             query = query.Where(c => c.CompanysId == companyId.Value);
         else if (!string.IsNullOrEmpty(liffId))
             query = query.Where(c => c.LiffId == liffId);
         else if (!string.IsNullOrEmpty(domain))
             query = query.Where(c => c.LoginCallbackUrl != null && c.LoginCallbackUrl.Contains(domain));
         // else: ไม่มี param → ใช้ตัวแรกที่ active
+=======
+        {
+            query = query.Where(c => c.CompanysId == companyId.Value);
+        }
+        else if (!string.IsNullOrWhiteSpace(liffId))
+        {
+            query = query.Where(c => c.LiffId == liffId);
+        }
+        else if (!string.IsNullOrWhiteSpace(domain))
+        {
+            query = query.Where(c => c.LoginCallbackUrl != null && c.LoginCallbackUrl.Contains(domain));
+        }
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
 
         var config = await query
             .Select(c => new { c.LiffId, c.LoginChannelId, c.LineOaName, c.CompanysId })
             .FirstOrDefaultAsync();
 
         if (config == null)
+<<<<<<< HEAD
             return Ok(new { liffId = (string?)null, loginChannelId = (string?)null, companyId = (int?)null });
 
         return Ok(new { liffId = config.LiffId, loginChannelId = config.LoginChannelId, oaName = config.LineOaName, companyId = config.CompanysId });
@@ -79,6 +100,21 @@ public class LineController : ControllerBase
     /// Step 1: redirect ผู้ใช้ไปหน้า LINE Login
     /// GET /api/line/login → redirect to LINE
     /// </summary>
+=======
+        {
+            return Ok(new { liffId = (string?)null, loginChannelId = (string?)null, companyId = (int?)null });
+        }
+
+        return Ok(new
+        {
+            liffId = config.LiffId,
+            loginChannelId = config.LoginChannelId,
+            oaName = config.LineOaName,
+            companyId = config.CompanysId
+        });
+    }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     [HttpGet("login")]
     public IActionResult Login([FromQuery] string? redirectAfter = null)
     {
@@ -87,15 +123,19 @@ public class LineController : ControllerBase
         return Redirect(url);
     }
 
+<<<<<<< HEAD
     /// <summary>
     /// Step 2: LINE redirect กลับมาพร้อม code
     /// GET /api/line/callback?code=xxx&state=xxx
     /// </summary>
+=======
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     [HttpGet("callback")]
     public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string? state)
     {
         try
         {
+<<<<<<< HEAD
             // 1. แลก code → token
             var tokenResp = await _lineLogin.ExchangeCodeAsync(code);
             if (tokenResp == null)
@@ -107,6 +147,20 @@ public class LineController : ControllerBase
                 return BadRequest(new { error = "Failed to get LINE profile" });
 
             // 3. ดึง email จาก id_token (ถ้ามี)
+=======
+            var tokenResp = await _lineLogin.ExchangeCodeAsync(code);
+            if (tokenResp == null)
+            {
+                return BadRequest(new { error = "Failed to exchange LINE code for token" });
+            }
+
+            var profile = await _lineLogin.GetProfileAsync(tokenResp.AccessToken);
+            if (profile == null)
+            {
+                return BadRequest(new { error = "Failed to get LINE profile" });
+            }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             string? email = null;
             if (!string.IsNullOrEmpty(tokenResp.IdToken))
             {
@@ -114,25 +168,40 @@ public class LineController : ControllerBase
                 email = idPayload?.Email;
             }
 
+<<<<<<< HEAD
             // 4. หา CompanysId จาก LineLoginService config cache
             var companysId = await ResolveCompanysIdAsync(null);
 
             // 5. ค้นหา member ที่ผูก LINE userId นี้
+=======
+            var companysId = await ResolveCompanysIdAsync(null);
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             var existingProfile = await _memberService.GetByLineUserIdAsync(profile.UserId);
 
             if (existingProfile != null)
             {
+<<<<<<< HEAD
                 // member มีอยู่แล้ว → update CompanysId ถ้ายังไม่มี
+=======
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
                 await _memberService.EnsureCompanysIdAsync(profile.UserId, companysId);
                 return Ok(new
                 {
                     isNewMember = false,
                     member = await _memberService.GetByLineUserIdAsync(profile.UserId),
+<<<<<<< HEAD
                     lineAccessToken = tokenResp.AccessToken
                 });
             }
 
             // 6. สมัครสมาชิกใหม่ + set CompanysId
+=======
+                    lineAccessToken = tokenResp.AccessToken,
+                    state
+                });
+            }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             var newMember = await _memberService.RegisterAsync(new MemberRegisterRequest
             {
                 DisplayName = profile.DisplayName,
@@ -148,7 +217,12 @@ public class LineController : ControllerBase
             {
                 isNewMember = true,
                 member = newMember,
+<<<<<<< HEAD
                 lineAccessToken = tokenResp.AccessToken
+=======
+                lineAccessToken = tokenResp.AccessToken,
+                state
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             });
         }
         catch (Exception ex)
@@ -158,15 +232,19 @@ public class LineController : ControllerBase
         }
     }
 
+<<<<<<< HEAD
     /// <summary>
     /// สำหรับ LIFF/Frontend: ส่ง LINE access token มา → ดึง/สร้าง member
     /// POST /api/line/auth { accessToken: "xxx" }
     /// </summary>
+=======
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     [HttpPost("auth")]
     public async Task<IActionResult> AuthByToken([FromBody] LineAuthRequest req)
     {
         try
         {
+<<<<<<< HEAD
             // ดึง profile จาก access token
             var profile = await _lineLogin.GetProfileAsync(req.AccessToken);
             if (profile == null)
@@ -185,6 +263,27 @@ public class LineController : ControllerBase
             }
 
             // สร้างใหม่ + set CompanysId
+=======
+            var profile = await _lineLogin.GetProfileAsync(req.AccessToken);
+            if (profile == null)
+            {
+                return Unauthorized(new { error = "Invalid LINE access token" });
+            }
+
+            var companysId = await ResolveCompanysIdAsync(req.LiffId);
+            var existing = await _memberService.GetByLineUserIdAsync(profile.UserId);
+
+            if (existing != null)
+            {
+                await _memberService.EnsureCompanysIdAsync(profile.UserId, companysId);
+                return Ok(new
+                {
+                    isNewMember = false,
+                    member = await _memberService.GetByLineUserIdAsync(profile.UserId)
+                });
+            }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             var newMember = await _memberService.RegisterAsync(new MemberRegisterRequest
             {
                 DisplayName = profile.DisplayName,
@@ -199,10 +298,15 @@ public class LineController : ControllerBase
         }
         catch (Exception ex)
         {
+<<<<<<< HEAD
+=======
+            _logger.LogError(ex, "LINE auth by token error");
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             return BadRequest(new { error = ex.Message });
         }
     }
 
+<<<<<<< HEAD
     // ═══════════════════════════════════════════════
     // LINE Webhook (Messaging API)
     // ═══════════════════════════════════════════════
@@ -229,6 +333,26 @@ public class LineController : ControllerBase
         // 3. Parse events
         var webhookBody = _lineWebhook.ParseEvents(body);
         if (webhookBody?.Events == null) return Ok();
+=======
+    [HttpPost("webhook")]
+    public async Task<IActionResult> Webhook()
+    {
+        using var reader = new StreamReader(Request.Body);
+        var body = await reader.ReadToEndAsync();
+
+        var signature = Request.Headers["X-Line-Signature"].FirstOrDefault();
+        if (string.IsNullOrEmpty(signature) || !_lineWebhook.VerifySignature(body, signature))
+        {
+            _logger.LogWarning("LINE webhook invalid signature");
+            return Unauthorized();
+        }
+
+        var webhookBody = _lineWebhook.ParseEvents(body);
+        if (webhookBody?.Events == null)
+        {
+            return Ok();
+        }
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
 
         foreach (var evt in webhookBody.Events)
         {
@@ -238,7 +362,11 @@ public class LineController : ControllerBase
             }
             catch (Exception ex)
             {
+<<<<<<< HEAD
                 _logger.LogError(ex, "Error processing LINE event: {Type}", evt.Type);
+=======
+                _logger.LogError(ex, "Error processing LINE event: {EventType}", evt.Type);
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             }
         }
 
@@ -248,11 +376,19 @@ public class LineController : ControllerBase
     private async Task ProcessEventAsync(LineWebhookEvent evt, string rawPayload)
     {
         var userId = evt.Source?.UserId;
+<<<<<<< HEAD
         if (string.IsNullOrEmpty(userId)) return;
+=======
+        if (string.IsNullOrEmpty(userId))
+        {
+            return;
+        }
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
 
         switch (evt.Type)
         {
             case "follow":
+<<<<<<< HEAD
                 _logger.LogInformation("LINE follow: {UserId}", userId);
                 // ค้นหา member — ถ้ามี ส่งต้อนรับ
                 var member = await _memberService.GetByLineUserIdAsync(userId);
@@ -280,30 +416,79 @@ public class LineController : ControllerBase
 
             default:
                 _logger.LogInformation("LINE event: {Type} from {UserId}", evt.Type, userId);
+=======
+                await ProcessFollowAsync(evt, userId);
+                break;
+            case "unfollow":
+                _logger.LogInformation("LINE unfollow: {UserId}", userId);
+                break;
+            case "message":
+                await ProcessMessageAsync(evt, userId, rawPayload);
+                break;
+            default:
+                _logger.LogInformation("LINE event: {EventType} from {UserId}", evt.Type, userId);
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
                 break;
         }
     }
 
+<<<<<<< HEAD
+=======
+    private async Task ProcessFollowAsync(LineWebhookEvent evt, string userId)
+    {
+        _logger.LogInformation("LINE follow: {UserId}", userId);
+
+        var member = await _memberService.GetByLineUserIdAsync(userId);
+        if (string.IsNullOrEmpty(evt.ReplyToken))
+        {
+            return;
+        }
+
+        if (member != null)
+        {
+            await _lineWebhook.ReplyAsync(
+                evt.ReplyToken,
+                $"Welcome back {member.DisplayName}! Member code: {member.MemberCode}, points: {member.PointBalance?.AvailablePoints ?? 0}");
+            return;
+        }
+
+        await _lineWebhook.ReplyAsync(
+            evt.ReplyToken,
+            "Welcome to our member system. Please register through the LIFF link to start earning points.");
+    }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     private async Task ProcessMessageAsync(LineWebhookEvent evt, string userId, string rawPayload)
     {
         var messageType = evt.Message?.Type ?? "unknown";
         var messageText = evt.Message?.Text;
 
+<<<<<<< HEAD
         // บันทึกลง LineMessageInbox
         var member = await _db.MemberIdentities
+=======
+        var identity = await _db.MemberIdentities
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             .FirstOrDefaultAsync(i => i.ProviderUserKey == userId && i.IsActive);
 
         _db.LineMessageInbox.Add(new LineMessageInboxEntry
         {
+<<<<<<< HEAD
             MemberId = member?.MemberId,
             LineUserId = userId,
             MessageType = messageType.ToUpper(),
+=======
+            MemberId = identity?.MemberId,
+            LineUserId = userId,
+            MessageType = messageType.ToUpperInvariant(),
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             RawPayload = rawPayload,
             ProcessStatus = "New",
             CreatedAt = DateTime.UtcNow
         });
         await _db.SaveChangesAsync();
 
+<<<<<<< HEAD
         // ตอบกลับอัตโนมัติ (ถ้าเป็น text)
         if (messageType == "text" && !string.IsNullOrEmpty(evt.ReplyToken))
         {
@@ -314,12 +499,18 @@ public class LineController : ControllerBase
                 _ => "ขอบคุณที่ทักมาค่ะ! 💕\nพิมพ์ \"แต้ม\" เพื่อเช็คแต้มของคุณ"
             };
 
+=======
+        if (messageType == "text" && !string.IsNullOrEmpty(evt.ReplyToken))
+        {
+            var reply = await GetReplyTextAsync(identity?.MemberId, messageText);
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
             await _lineWebhook.ReplyAsync(evt.ReplyToken, reply);
         }
 
         _logger.LogInformation("LINE message from {UserId}: {Type} - {Text}", userId, messageType, messageText ?? "(no text)");
     }
 
+<<<<<<< HEAD
     private async Task<string> GetPointsReplyAsync(long? memberId)
     {
         if (!memberId.HasValue)
@@ -345,15 +536,56 @@ public class LineController : ControllerBase
     private async Task<int?> ResolveCompanysIdAsync(string? liffId)
     {
         if (!string.IsNullOrEmpty(liffId))
+=======
+    private async Task<string> GetReplyTextAsync(long? memberId, string? messageText)
+    {
+        return messageText?.Trim().ToLowerInvariant() switch
+        {
+            "แต้ม" or "คะแนน" or "points" => await GetPointsReplyAsync(memberId),
+            "สมัคร" or "register" => "Please continue registration through the member LIFF page.",
+            _ => "Thanks for your message. Send 'แต้ม' or 'points' to check your current balance."
+        };
+    }
+
+    private async Task<string> GetPointsReplyAsync(long? memberId)
+    {
+        if (!memberId.HasValue)
+        {
+            return "Please register your member account first to check your points.";
+        }
+
+        var account = await _db.PointAccounts.FirstOrDefaultAsync(p => p.MemberId == memberId.Value);
+        if (account == null)
+        {
+            return "You do not have any points yet.";
+        }
+
+        return $"Available: {account.AvailablePoints:N0} points, Reserved: {account.ReservedPoints:N0}, Total earned: {account.TotalEarned:N0}, Total burned: {account.TotalBurned:N0}";
+    }
+
+    private async Task<int?> ResolveCompanysIdAsync(string? liffId)
+    {
+        if (!string.IsNullOrWhiteSpace(liffId))
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
         {
             var config = await _db.LineOaConfigs
                 .Where(c => c.IsActive && c.LiffId == liffId)
                 .Select(c => (int?)c.CompanysId)
                 .FirstOrDefaultAsync();
+<<<<<<< HEAD
             if (config.HasValue) return config;
         }
 
         // Fallback: ใช้ config ตัวแรกที่ active
+=======
+
+            if (config.HasValue)
+            {
+                return config;
+            }
+        }
+
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
         return await _db.LineOaConfigs
             .Where(c => c.IsActive)
             .Select(c => (int?)c.CompanysId)
@@ -361,10 +593,16 @@ public class LineController : ControllerBase
     }
 }
 
+<<<<<<< HEAD
 // ─── Request DTOs ─────────────────────────────────
 public class LineAuthRequest
 {
     public string AccessToken { get; set; } = default!;
     /// <summary>LIFF ID ที่ frontend ใช้ — เพื่อ match กลับหา CompanysId</summary>
+=======
+public class LineAuthRequest
+{
+    public string AccessToken { get; set; } = default!;
+>>>>>>> 2961fdec8de78fe692e89e3203f173cc374dbbab
     public string? LiffId { get; set; }
 }
