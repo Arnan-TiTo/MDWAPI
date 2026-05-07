@@ -1,0 +1,105 @@
+name: Deploy MDWAPI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/MDWAPI/**"
+      - ".github/workflows/deploy-mdwapi.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-mdwapi
+  cancel-in-progress: false
+
+env:
+  PROJECT_PATH: src/MDWAPI/MDWAPI.csproj
+  PUBLISH_DIR: ${{ github.workspace }}/artifacts/mdwapi-publish
+  DEPLOY_DIR: /opt/mdwapi
+  SERVICE_NAME: mdwapi
+  APP_URLS: http://0.0.0.0:7192
+
+jobs:
+  deploy:
+    name: Build and deploy MDWAPI
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore "$PROJECT_PATH"
+
+      - name: Publish
+        run: dotnet publish "$PROJECT_PATH" --configuration Release --no-restore --output "$PUBLISH_DIR"
+
+      - name: Install or update systemd service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo mkdir -p "$DEPLOY_DIR" /etc/mdwapi
+          sudo chown -R "$USER":"$USER" "$DEPLOY_DIR"
+
+          if [ ! -f /etc/systemd/system/"$SERVICE_NAME".service ]; then
+            cat <<SERVICE | sudo tee /etc/systemd/system/"$SERVICE_NAME".service >/dev/null
+          [Unit]
+          Description=MDWAPI
+          After=network.target
+
+          [Service]
+          WorkingDirectory=$DEPLOY_DIR
+          ExecStart=/usr/bin/dotnet $DEPLOY_DIR/MDWAPI.dll
+          Restart=always
+          RestartSec=10
+          KillSignal=SIGINT
+          SyslogIdentifier=$SERVICE_NAME
+          User=$USER
+          Environment=ASPNETCORE_ENVIRONMENT=Production
+          Environment=ASPNETCORE_URLS=$APP_URLS
+          EnvironmentFile=-/etc/mdwapi/mdwapi.env
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+          fi
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable "$SERVICE_NAME"
+
+      - name: Deploy published files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            --exclude appsettings.Production.json \
+            "$PUBLISH_DIR"/ "$DEPLOY_DIR"/
+
+      - name: Restart service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl restart "$SERVICE_NAME"
+          sudo systemctl status "$SERVICE_NAME" --no-pager
+
+      - name: Health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..20}; do
+            if curl -fsS "http://127.0.0.1:7192/health"; then
+              exit 0
+            fi
+            sleep 3
+          done
+
+          sudo journalctl -u "$SERVICE_NAME" -n 100 --no-pager
+          exit 1
