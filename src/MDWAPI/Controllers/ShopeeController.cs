@@ -34,10 +34,14 @@ public class ShopeeController : ControllerBase
 
     // GET /api/shopee/order-detail?shopId=123&orderSn=220101ABCDE
     [HttpGet("order-detail")]
-    public async Task<IActionResult> GetOrderDetail([FromQuery] long shopId, [FromQuery] string orderSn, CancellationToken ct)
+    public async Task<IActionResult> GetOrderDetail(
+        [FromQuery] long shopId,
+        [FromQuery] string orderSn,
+        [FromQuery] string? responseOptionalFields,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(orderSn)) return BadRequest("orderSn is required");
-        var result = await _svc.GetOrderDetailRawAsync(shopId, orderSn, ct);
+        var result = await _svc.GetOrderDetailRawAsync(shopId, orderSn, ct, responseOptionalFields);
         return Ok(result);
 
     }

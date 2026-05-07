@@ -22,7 +22,8 @@ public class ShopeeOrderService
             "estimated_shipping_fee,days_to_ship,item_list,package_list,note," +
             "note_update_time,message_to_seller,region,reverse_shipping_fee," +
             "actual_shipping_fee_confirmed,invoice_data,order_status,pickup_done_time," +
-            "pay_time,shipping_carrier,total_amount,create_time,update_time," +
+            "pay_time,shipping_carrier,total_amount,create_time,update_time,complete_time,cancel_time," +
+            "seller_discount,discount,voucher_amount," +
             "dropshipper,dropshipper_phone,fulfillment_flag,ship_by_date,split_up,currency";
         // get_order_list: อย่าส่งฟิลด์ที่ list ไม่รองรับ (ปลอดภัยสุด: ไม่ต้องส่ง)
         public const string List = "order_status,create_time,update_time";
@@ -81,7 +82,11 @@ public class ShopeeOrderService
     }
 
     // detail
-    public async Task<string> GetOrderDetailRawAsync(long shopId, string orderSn, CancellationToken ct = default)
+    public async Task<string> GetOrderDetailRawAsync(
+        long shopId,
+        string orderSn,
+        CancellationToken ct = default,
+        string? responseOptionalFields = null)
     {
         if (string.IsNullOrWhiteSpace(orderSn))
             throw new ArgumentException("orderSn is required", nameof(orderSn));
@@ -93,7 +98,9 @@ public class ShopeeOrderService
             {
                 ["order_sn_list"] = orderSn,
                 ["request_order_status_pending"] = "true",
-                ["response_optional_fields"] = ShopeeOptionalFields.Detail
+                ["response_optional_fields"] = string.IsNullOrWhiteSpace(responseOptionalFields)
+                    ? ShopeeOptionalFields.Detail
+                    : responseOptionalFields
             },
             ct: ct);
 
@@ -116,7 +123,8 @@ public class ShopeeOrderService
         int pageSize = 50,
         string? cursor = null,
         string? orderStatus = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? responseOptionalFields = null)
     {
         if (string.IsNullOrWhiteSpace(timeRangeField))
             throw new ArgumentException("timeRangeField is required", nameof(timeRangeField));
@@ -133,6 +141,7 @@ public class ShopeeOrderService
         };
         if (!string.IsNullOrWhiteSpace(cursor)) query["cursor"] = cursor;
         if (!string.IsNullOrWhiteSpace(orderStatus)) query["order_status"] = orderStatus;
+        if (!string.IsNullOrWhiteSpace(responseOptionalFields)) query["response_optional_fields"] = responseOptionalFields;
 
         var (url, http) = await BuildSignedGetAsync(
             apiPath: ShopeeApiPaths.OrderGetList,
@@ -159,17 +168,25 @@ public class ShopeeOrderService
     /// </summary>
     public async Task<string> GetReturnListRawAsync(
         long shopId,
-        long updateTimeFrom,
-        long updateTimeTo,
-        int pageNo = 1,
+        long timeFrom,
+        long timeTo,
+        int pageNo = 0,
         int pageSize = 50,
         string? status = null,
+        string timeRangeField = "create_time",
         CancellationToken ct = default)
     {
+        var fromKey = timeRangeField.Equals("update_time", StringComparison.OrdinalIgnoreCase)
+            ? "update_time_from"
+            : "create_time_from";
+        var toKey = timeRangeField.Equals("update_time", StringComparison.OrdinalIgnoreCase)
+            ? "update_time_to"
+            : "create_time_to";
+
         var query = new Dictionary<string, string?>
         {
-            ["update_time_from"] = updateTimeFrom.ToString(),
-            ["update_time_to"] = updateTimeTo.ToString(),
+            [fromKey] = timeFrom.ToString(),
+            [toKey] = timeTo.ToString(),
             ["page_no"] = pageNo.ToString(),
             ["page_size"] = pageSize.ToString()
         };
@@ -199,12 +216,15 @@ public class ShopeeOrderService
     /// </summary>
     public async Task<string> GetReturnDetailRawAsync(
         long shopId,
-        long returnSn,
+        string returnSn,
         CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(returnSn))
+            throw new ArgumentException("returnSn is required", nameof(returnSn));
+
         var query = new Dictionary<string, string?>
         {
-            ["return_sn"] = returnSn.ToString()
+            ["return_sn"] = returnSn
         };
 
         var (url, http) = await BuildSignedGetAsync(

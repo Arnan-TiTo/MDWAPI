@@ -183,13 +183,23 @@ public class NormalizeController : ControllerBase
                 _ => throw new ArgumentException("Unsupported platform")
             };
 
+            var escrowResult = await TryFetchAndUpsertShopeeEscrowAsync(
+                platform,
+                shopId,
+                r.ExternalOrderId,
+                client,
+                ct);
+
             await audit.AddItemAsync(transId, new UnifiedOrderTransItem
             {
                 OrderRef = orderRef,
                 ExternalOrderId = r.ExternalOrderId,
                 RawHash = r.RawHash,
                 UnifiedOrderId = r.UnifiedOrderId,
-                Result = r.Outcome.ToString()
+                Result = r.Outcome.ToString(),
+                ErrorMessage = escrowResult is not null && !escrowResult.Equals("synced", StringComparison.OrdinalIgnoreCase)
+                    ? $"escrow {escrowResult}"
+                    : null
             }, ct);
 
             await audit.CompleteAsync(transId, h =>
@@ -200,7 +210,14 @@ public class NormalizeController : ControllerBase
                 else h.UnchangedCount = 1;
             }, ct);
 
-            return Ok(new { count = 1, unifiedOrderIds = new[] { r.UnifiedOrderId }, outcome = r.Outcome.ToString(), batchNo = trans.BatchNo });
+            return Ok(new
+            {
+                count = 1,
+                unifiedOrderIds = new[] { r.UnifiedOrderId },
+                outcome = r.Outcome.ToString(),
+                escrow = escrowResult,
+                batchNo = trans.BatchNo
+            });
         }
         catch (Exception ex)
         {
@@ -363,6 +380,7 @@ public class NormalizeController : ControllerBase
             var totalRefs = orderRefs.Count;
 
             int attempted = 0, created = 0, updated = 0, unchanged = 0, failed = 0;
+            int escrowSynced = 0, escrowFailed = 0;
             var unifiedIds = new List<long>();
 
             // =========================
@@ -472,13 +490,28 @@ public class NormalizeController : ControllerBase
                         _ => throw new ArgumentException("Unsupported platform")
                     };
 
+                    var escrowResult = await TryFetchAndUpsertShopeeEscrowAsync(
+                        platform,
+                        shopId,
+                        r.ExternalOrderId,
+                        client,
+                        ct);
+                    if (escrowResult is not null)
+                    {
+                        if (escrowResult.Equals("synced", StringComparison.OrdinalIgnoreCase)) escrowSynced++;
+                        else escrowFailed++;
+                    }
+
                     await audit.AddItemAsync(transId, new UnifiedOrderTransItem
                     {
                         OrderRef = orderRef,
                         ExternalOrderId = r.ExternalOrderId,
                         RawHash = r.RawHash,
                         UnifiedOrderId = r.UnifiedOrderId,
-                        Result = r.Outcome.ToString()
+                        Result = r.Outcome.ToString(),
+                        ErrorMessage = escrowResult is not null && !escrowResult.Equals("synced", StringComparison.OrdinalIgnoreCase)
+                            ? $"escrow {escrowResult}"
+                            : null
                     }, ct);
 
                     unifiedIds.Add(r.UnifiedOrderId);
@@ -502,7 +535,7 @@ public class NormalizeController : ControllerBase
             {
                 h.TotalRefs = totalRefs; h.Attempted = attempted; h.CreatedCount = created;
                 h.UpdatedCount = updated; h.UnchangedCount = unchanged; h.FailedCount = failed;
-                h.Notes = $"RangeField={timeRangeField}, From={timeFrom}, To={timeTo}";
+                h.Notes = $"RangeField={timeRangeField}, From={timeFrom}, To={timeTo}, EscrowSynced={escrowSynced}, EscrowFailed={escrowFailed}";
             }, ct);
 
             return Ok(new
@@ -519,6 +552,8 @@ public class NormalizeController : ControllerBase
                 updated,
                 unchanged,
                 failed,
+                escrowSynced,
+                escrowFailed,
                 unifiedOrderIds = unifiedIds
             });
         }
@@ -532,6 +567,52 @@ public class NormalizeController : ControllerBase
     // ========================
     // Helpers
     // ========================
+    private async Task<string?> TryFetchAndUpsertShopeeEscrowAsync(
+        string platform,
+        long? shopId,
+        string orderSn,
+        HttpClient client,
+        CancellationToken ct)
+    {
+        if (!platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        if (shopId is null)
+            return "skipped: missing shopId";
+
+        var escrowUrl = $"/api/market/orders/escrow-detail?shopId={shopId.Value}&orderSn={Uri.EscapeDataString(orderSn)}";
+
+        try
+        {
+            using var resp = await client.GetAsync(escrowUrl, ct);
+            var json = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                _log.LogWarning("Shopee escrow fetch failed for {OrderSn}: {Status} {Body}",
+                    orderSn, (int)resp.StatusCode, json);
+                return $"failed: HTTP {(int)resp.StatusCode}";
+            }
+
+            using (var doc = JsonDocument.Parse(json))
+            {
+                if (HasExplicitError(doc.RootElement))
+                {
+                    _log.LogWarning("Shopee escrow returned error payload for {OrderSn}: {Body}", orderSn, json);
+                    return "failed: error payload";
+                }
+            }
+
+            await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+            return "synced";
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Shopee escrow sync failed for {OrderSn}", orderSn);
+            return $"failed: {ex.Message}";
+        }
+    }
+
     private async Task<bool> RefreshTokenIfNeededAsync(
         string platform,
         long shopId,

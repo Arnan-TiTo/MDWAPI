@@ -100,6 +100,14 @@ public class MarketplaceOrderActionsController : ControllerBase
         string Note
     );
 
+    private sealed record ShopeeShippingDocumentRequest(
+        Dictionary<string, object?> CreateOrder,
+        Dictionary<string, object?> DocumentOrder,
+        string DocumentType,
+        string ParameterJson,
+        string? TrackingJson
+    );
+
     // ====== 0) Sync Returns/Refunds ======
 
     /// <summary>
@@ -114,6 +122,7 @@ public class MarketplaceOrderActionsController : ControllerBase
         [FromQuery] long? timeTo = null,
         [FromQuery] string? orderRef = null,
         [FromQuery] string? status = null,
+        [FromQuery] string timeRangeField = "create_time",
         CancellationToken ct = default)
     {
         await RefreshTokenIfNeededAsync(platform.ToString(), shopId, ct);
@@ -134,7 +143,7 @@ public class MarketplaceOrderActionsController : ControllerBase
                     var now = DateTimeOffset.UtcNow;
                     var from = timeFrom ?? now.AddDays(-15).ToUnixTimeSeconds();
                     var to = timeTo ?? now.ToUnixTimeSeconds();
-                    result = await _returnSync.SyncShopeeReturnsAsync(shopId, from, to, status, ct);
+                    result = await _returnSync.SyncShopeeReturnsAsync(shopId, from, to, status, timeRangeField, ct);
                 }
 
                 return Ok(new
@@ -549,44 +558,14 @@ public class MarketplaceOrderActionsController : ControllerBase
         {
             case Platform.Shopee:
                 {
-                    // Step 1: get_shipping_document_parameter → ดูว่ามี document type อะไรบ้าง
-                    var paramBody = new { order_list = new[] { new { order_sn = req.OrderRef } } };
-                    var paramJson = await _shopeeLogi.GetShippingDocumentParameterAsync(req.ShopId, paramBody, ct);
-                    _log.LogInformation("Shopee doc param for {OrderRef}: {Param}", req.OrderRef, paramJson);
-
-                    // ดึง shipping_document_type จาก response
-                    string docType = "NORMAL_AIR_WAYBILL"; // default
-                    using (var pDoc = JsonDocument.Parse(paramJson))
-                    {
-                        var pRoot = pDoc.RootElement;
-                        if (pRoot.TryGetProperty("response", out var pResp)
-                            && pResp.TryGetProperty("result_list", out var resultList)
-                            && resultList.ValueKind == JsonValueKind.Array
-                            && resultList.GetArrayLength() > 0)
-                        {
-                            var first = resultList[0];
-                            if (first.TryGetProperty("suggest_shipping_document_type", out var suggestType))
-                                docType = suggestType.GetString() ?? docType;
-                            else if (first.TryGetProperty("selectable_component", out var selectable)
-                                     && selectable.ValueKind == JsonValueKind.Array
-                                     && selectable.GetArrayLength() > 0)
-                            {
-                                // ใช้ตัวแรกที่มี
-                                docType = selectable[0].GetString() ?? docType;
-                            }
-                        }
-                    }
+                    var docRequest = await BuildShopeeShippingDocumentRequestAsync(req.ShopId, req.OrderRef, ct);
+                    var docType = docRequest.DocumentType;
+                    var paramJson = docRequest.ParameterJson;
 
                     _log.LogInformation("Using shipping_document_type={DocType} for {OrderRef}", docType, req.OrderRef);
 
                     // Step 2: create_shipping_document
-                    var createBody = new
-                    {
-                        order_list = new[]
-                        {
-                            new { order_sn = req.OrderRef, shipping_document_type = docType }
-                        }
-                    };
+                    var createBody = BuildShopeeShippingDocumentBody(docRequest.CreateOrder);
                     var createJson = await _shopeeLogi.CreateShippingDocumentAsync(req.ShopId, createBody, ct);
                     _log.LogInformation("Shopee create doc for {OrderRef}: {Result}", req.OrderRef, createJson);
 
@@ -610,13 +589,7 @@ public class MarketplaceOrderActionsController : ControllerBase
                     {
                         try
                         {
-                            var directBody = new
-                            {
-                                order_list = new[]
-                                {
-                                    new { order_sn = req.OrderRef, shipping_document_type = docType }
-                                }
-                            };
+                            var directBody = BuildShopeeShippingDocumentBody(docRequest.DocumentOrder);
                             var pdfDirect = await _shopeeLogi.DownloadShippingDocumentAsync(req.ShopId, directBody, ct);
                             if (pdfDirect.Length > 0)
                                 return File(pdfDirect, "application/pdf", $"label-{req.OrderRef}.pdf");
@@ -634,7 +607,8 @@ public class MarketplaceOrderActionsController : ControllerBase
                             orderRef = req.OrderRef,
                             docType,
                             createResponse = TryParseJson(createJson),
-                            paramResponse = TryParseJson(paramJson)
+                            paramResponse = TryParseJson(paramJson),
+                            trackingResponse = docRequest.TrackingJson is null ? null : TryParseJson(docRequest.TrackingJson)
                         });
                     }
 
@@ -647,13 +621,7 @@ public class MarketplaceOrderActionsController : ControllerBase
                     do
                     {
                         await Task.Delay(1500, ct);
-                        var resultBody = new
-                        {
-                            order_list = new[]
-                            {
-                                new { order_sn = req.OrderRef, shipping_document_type = docType }
-                            }
-                        };
+                        var resultBody = BuildShopeeShippingDocumentBody(docRequest.DocumentOrder);
                         resultJson = await _shopeeLogi.GetShippingDocumentResultAsync(req.ShopId, resultBody, ct);
 
                         using var rDoc = JsonDocument.Parse(resultJson);
@@ -689,13 +657,7 @@ public class MarketplaceOrderActionsController : ControllerBase
                     }
 
                     // Step 4: download_shipping_document
-                    var downloadBody = new
-                    {
-                        order_list = new[]
-                        {
-                            new { order_sn = req.OrderRef, shipping_document_type = docType }
-                        }
-                    };
+                    var downloadBody = BuildShopeeShippingDocumentBody(docRequest.DocumentOrder);
                     var pdfBytes = await _shopeeLogi.DownloadShippingDocumentAsync(req.ShopId, downloadBody, ct);
                     return File(pdfBytes, "application/pdf", $"label-{req.OrderRef}.pdf");
                 }
@@ -1111,6 +1073,137 @@ public class MarketplaceOrderActionsController : ControllerBase
         throw new InvalidOperationException("Cannot extract native Shopee order from API response");
     }
 
+    private async Task<ShopeeShippingDocumentRequest> BuildShopeeShippingDocumentRequestAsync(
+        long shopId,
+        string orderRef,
+        CancellationToken ct)
+    {
+        var paramBody = new { order_list = new[] { new { order_sn = orderRef } } };
+        var paramJson = await _shopeeLogi.GetShippingDocumentParameterAsync(shopId, paramBody, ct);
+        _log.LogInformation("Shopee doc param for {OrderRef}: {Param}", orderRef, paramJson);
+
+        var docType = "NORMAL_AIR_WAYBILL";
+        string? packageNumber = null;
+        string? trackingNumber = null;
+
+        using (var pDoc = JsonDocument.Parse(paramJson))
+        {
+            var pRoot = pDoc.RootElement;
+            if (pRoot.TryGetProperty("response", out var pResp)
+                && pResp.TryGetProperty("result_list", out var resultList)
+                && resultList.ValueKind == JsonValueKind.Array
+                && resultList.GetArrayLength() > 0)
+            {
+                var first = resultList[0];
+                packageNumber = GetString(first, "package_number");
+                trackingNumber = GetString(first, "tracking_number") ?? GetString(first, "shopee_tracking_number");
+
+                docType = GetString(first, "suggest_shipping_document_type")
+                    ?? GetFirstString(first, "selectable_shipping_document_type")
+                    ?? GetFirstString(first, "selectable_component")
+                    ?? docType;
+            }
+        }
+
+        string? trackingJson = null;
+        if (string.IsNullOrWhiteSpace(trackingNumber))
+        {
+            try
+            {
+                trackingJson = await _shopeeLogi.GetTrackingNumberAsync(shopId, orderRef, packageNumber, ct);
+                trackingNumber = ExtractShopeeTrackingNumber(trackingJson);
+                _log.LogInformation("Shopee tracking number for {OrderRef}: {Tracking}", orderRef, trackingJson);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Cannot fetch Shopee tracking number for {OrderRef}", orderRef);
+            }
+        }
+
+        var documentOrder = BuildShopeeShippingDocumentOrder(orderRef, packageNumber, null, docType);
+        var createOrder = BuildShopeeShippingDocumentOrder(orderRef, packageNumber, trackingNumber, docType);
+
+        return new ShopeeShippingDocumentRequest(createOrder, documentOrder, docType, paramJson, trackingJson);
+    }
+
+    private static object BuildShopeeShippingDocumentBody(Dictionary<string, object?> order)
+        => new { order_list = new[] { order } };
+
+    private static Dictionary<string, object?> BuildShopeeShippingDocumentOrder(
+        string orderSn,
+        string? packageNumber,
+        string? trackingNumber,
+        string shippingDocumentType)
+    {
+        var order = new Dictionary<string, object?>
+        {
+            ["order_sn"] = orderSn,
+            ["shipping_document_type"] = shippingDocumentType
+        };
+
+        if (!string.IsNullOrWhiteSpace(packageNumber))
+            order["package_number"] = packageNumber;
+        if (!string.IsNullOrWhiteSpace(trackingNumber))
+            order["tracking_number"] = trackingNumber;
+
+        return order;
+    }
+
+    private static string? ExtractShopeeTrackingNumber(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        if (root.TryGetProperty("response", out var response))
+        {
+            var direct = GetString(response, "tracking_number")
+                ?? GetString(response, "shopee_tracking_number")
+                ?? GetFirstObjectString(response, "tracking_number_list", "tracking_number")
+                ?? GetFirstObjectString(response, "result_list", "tracking_number")
+                ?? GetFirstObjectString(response, "order_list", "tracking_number");
+            if (!string.IsNullOrWhiteSpace(direct))
+                return direct;
+        }
+
+        return GetString(root, "tracking_number") ?? GetString(root, "shopee_tracking_number");
+    }
+
+    private static string? GetString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            _ => null
+        };
+    }
+
+    private static string? GetFirstString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value) ||
+            value.ValueKind != JsonValueKind.Array ||
+            value.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var first = value[0];
+        return first.ValueKind == JsonValueKind.String ? first.GetString() : first.ToString();
+    }
+
+    private static string? GetFirstObjectString(JsonElement root, string arrayPropertyName, string valuePropertyName)
+    {
+        if (!root.TryGetProperty(arrayPropertyName, out var array) ||
+            array.ValueKind != JsonValueKind.Array ||
+            array.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        return GetString(array[0], valuePropertyName);
+    }
+
     /// <summary>
     /// อ่าน get_shipping_parameter response แล้วสร้าง ship_order body ที่ถูกต้อง
     /// Shopee ต้องเลือก 1 type: pickup / dropoff / non_integrated
@@ -1243,29 +1336,11 @@ public class MarketplaceOrderActionsController : ControllerBase
 
         try
         {
-            // Step 1: get_shipping_document_parameter
-            var paramBody = new { order_list = new[] { new { order_sn = orderRef } } };
-            var paramJson = await _shopeeLogi.GetShippingDocumentParameterAsync(shopId, paramBody, ct);
-
-            using (var pDoc = JsonDocument.Parse(paramJson))
-            {
-                var pRoot = pDoc.RootElement;
-                if (pRoot.TryGetProperty("response", out var pResp)
-                    && pResp.TryGetProperty("result_list", out var resultList)
-                    && resultList.ValueKind == JsonValueKind.Array
-                    && resultList.GetArrayLength() > 0)
-                {
-                    var first = resultList[0];
-                    if (first.TryGetProperty("suggest_shipping_document_type", out var suggestType))
-                        docType = suggestType.GetString() ?? docType;
-                }
-            }
+            var docRequest = await BuildShopeeShippingDocumentRequestAsync(shopId, orderRef, ct);
+            docType = docRequest.DocumentType;
 
             // Step 2: create_shipping_document
-            var createBody = new
-            {
-                order_list = new[] { new { order_sn = orderRef, shipping_document_type = docType } }
-            };
+            var createBody = BuildShopeeShippingDocumentBody(docRequest.CreateOrder);
             var createJson = await _shopeeLogi.CreateShippingDocumentAsync(shopId, createBody, ct);
             _log.LogInformation("Auto create-label for {OrderRef}: {Result}", orderRef, createJson);
 
@@ -1276,7 +1351,7 @@ public class MarketplaceOrderActionsController : ControllerBase
             for (int i = 0; i < maxRetries && !docReady; i++)
             {
                 await Task.Delay(1500, ct);
-                var resultBody = new { order_list = new[] { new { order_sn = orderRef, shipping_document_type = docType } } };
+                var resultBody = BuildShopeeShippingDocumentBody(docRequest.DocumentOrder);
                 var resultJson = await _shopeeLogi.GetShippingDocumentResultAsync(shopId, resultBody, ct);
 
                 using var rDoc = JsonDocument.Parse(resultJson);
@@ -1299,7 +1374,7 @@ public class MarketplaceOrderActionsController : ControllerBase
                 throw new InvalidOperationException("Label document not ready after polling.");
 
             // Step 4: download
-            var downloadBody = new { order_list = new[] { new { order_sn = orderRef, shipping_document_type = docType } } };
+            var downloadBody = BuildShopeeShippingDocumentBody(docRequest.DocumentOrder);
             pdfBytes = await _shopeeLogi.DownloadShippingDocumentAsync(shopId, downloadBody, ct);
 
             if (pdfBytes.Length == 0)

@@ -65,7 +65,7 @@ public class MarketplaceLogisticsController : ControllerBase
         {
             case Platform.Shopee:
                 {
-                    var json = await _shopee.GetTrackingNumberAsync(shopId, refId, ct);
+                    var json = await _shopee.GetTrackingNumberAsync(shopId, refId, ct: ct);
                     return Content(json, "application/json");
                 }
             case Platform.Lazada:
@@ -193,9 +193,16 @@ public class MarketplaceLogisticsController : ControllerBase
 
         await RefreshTokenIfNeededAsync("Shopee", shopId, ct);
 
+        string shopeeRequestUrl;
         try
         {
-            await _shopee.GetShippingDocumentDataInfoAsync(shopId, orderSn, trackingNumber, ct);
+            var (url, _) = await _shopee.GetShippingDocumentDataInfoAsync(shopId, orderSn, trackingNumber, ct);
+            shopeeRequestUrl = url;
+        }
+        catch (ShopeeApiException ex)
+        {
+            var statusCode = ex.StatusCode.HasValue ? (int)ex.StatusCode.Value : 500;
+            return StatusCode(statusCode, new { error = ex.Message, shopeeRequestUrl = ex.RequestUrl });
         }
         catch (HttpRequestException ex) when (ex.StatusCode.HasValue)
         {
@@ -203,7 +210,7 @@ public class MarketplaceLogisticsController : ControllerBase
         }
 
         var records = await _labelDocRepo.GetByOrderSnAsync("Shopee", shopId, orderSn, ct);
-        return Ok(records);
+        return Ok(new { shopeeRequestUrl, data = records });
     }
 
     /// <summary>

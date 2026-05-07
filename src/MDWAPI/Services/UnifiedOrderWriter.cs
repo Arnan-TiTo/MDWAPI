@@ -447,6 +447,78 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         };
     }
 
+    public async Task UpsertShopeeEscrowAsync(string orderSn, string escrowJson, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderSn))
+            throw new ArgumentException("orderSn is required", nameof(orderSn));
+        if (string.IsNullOrWhiteSpace(escrowJson))
+            throw new ArgumentException("escrowJson is required", nameof(escrowJson));
+
+        using var doc = JsonDocument.Parse(escrowJson);
+        var income = ExtractShopeeOrderIncome(doc.RootElement);
+
+        var order = await _db.UnifiedOrders
+            .FirstOrDefaultAsync(x => x.Channel == "Shopee" && x.ExternalOrderId == orderSn, ct)
+            ?? throw new InvalidOperationException($"Shopee order not found in UnifiedOrders: {orderSn}");
+
+        order.EscrowAmount = GetDecimal(income, "escrow_amount");
+        order.BuyerPaidShippingFee = GetDecimal(income, "buyer_paid_shipping_fee");
+        order.ActualShippingFee = GetDecimal(income, "actual_shipping_fee");
+        order.PlatformShippingRebate = GetDecimal(income, "shopee_shipping_rebate");
+        order.CommissionFee = GetDecimal(income, "commission_fee");
+        order.ServiceFee = GetDecimal(income, "service_fee");
+        order.PlatformFee = GetDecimal(income, "platform_fee");
+        order.PaymentTransactionFee = GetDecimal(income, "seller_transaction_fee");
+        order.AmsCommissionFee = GetDecimal(income, "ams_commission_fee");
+        order.SellerVoucherCode = GetStringOrCsv(income, "seller_voucher_code");
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private static JsonElement ExtractShopeeOrderIncome(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("response", out var response) &&
+            response.ValueKind == JsonValueKind.Object &&
+            response.TryGetProperty("order_income", out var orderIncome) &&
+            orderIncome.ValueKind == JsonValueKind.Object)
+        {
+            return orderIncome;
+        }
+
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("order_income", out var directIncome) &&
+            directIncome.ValueKind == JsonValueKind.Object)
+        {
+            return directIncome;
+        }
+
+        throw new ArgumentException("Shopee escrow payload missing response.order_income");
+    }
+
+    private static decimal? GetDecimal(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.Number) return value.GetDecimal();
+        if (value.ValueKind == JsonValueKind.String &&
+            decimal.TryParse(value.GetString(), out var parsed)) return parsed;
+        return null;
+    }
+
+    private static string? GetStringOrCsv(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out var value)) return null;
+        if (value.ValueKind == JsonValueKind.String) return value.GetString();
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var values = value.EnumerateArray()
+                .Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() : x.ToString())
+                .Where(x => !string.IsNullOrWhiteSpace(x));
+            return string.Join(",", values);
+        }
+        return value.ToString();
+    }
+
     // (ยังคง generic minimal สำหรับแพลตฟอร์มอื่น จนกว่าจะทำ normalizer ของมัน)
     public async Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct)
     {

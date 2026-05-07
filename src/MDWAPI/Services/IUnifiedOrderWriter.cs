@@ -11,5 +11,5 @@ public interface IUnifiedOrderWriter
     Task<NormalizeResult> UpsertFromShopeeRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct);
     Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct);
     Task<NormalizeResult> UpsertFromLazadaRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct);
+    Task UpsertShopeeEscrowAsync(string orderSn, string escrowJson, CancellationToken ct);
 }
-

@@ -39,7 +39,7 @@ public class ReturnRefundSyncService
     /// page_no starts at 0 (per Shopee doc).
     /// </summary>
     public async Task<SyncReturnResult> SyncShopeeReturnsAsync(
-        long shopId, long timeFrom, long timeTo, string? status = null, CancellationToken ct = default)
+        long shopId, long timeFrom, long timeTo, string? status = null, string timeRangeField = "create_time", CancellationToken ct = default)
     {
         var result = new SyncReturnResult();
         const long MaxWindowSec = 15 * 24 * 3600; // 15 days in seconds
@@ -54,7 +54,7 @@ public class ReturnRefundSyncService
                 "SyncShopeeReturns: shop={ShopId} window={From}~{To}",
                 shopId, windowFrom, windowTo);
 
-            await FetchReturnWindowAsync(shopId, windowFrom, windowTo, status, result, ct);
+            await FetchReturnWindowAsync(shopId, windowFrom, windowTo, status, timeRangeField, result, ct);
 
             windowFrom = windowTo; // move to next window
         }
@@ -71,6 +71,7 @@ public class ReturnRefundSyncService
     /// </summary>
     private async Task FetchReturnWindowAsync(
         long shopId, long timeFrom, long timeTo, string? status,
+        string timeRangeField,
         SyncReturnResult result, CancellationToken ct)
     {
         int pageNo = 0; // Shopee doc: page_no starts at 0
@@ -82,7 +83,7 @@ public class ReturnRefundSyncService
             try
             {
                 listJson = await _shopeeOrder.GetReturnListRawAsync(
-                    shopId, timeFrom, timeTo, pageNo, 50, status, ct);
+                    shopId, timeFrom, timeTo, pageNo, 50, status, timeRangeField, ct);
             }
             catch (Exception ex)
             {
@@ -113,10 +114,9 @@ public class ReturnRefundSyncService
             }
 
             // parse return list
-            if (!resp.TryGetProperty("return_list", out var returnList)
-                || returnList.ValueKind != JsonValueKind.Array)
+            if (!TryGetReturnArray(resp, out var returnList))
             {
-                _log.LogInformation("Empty return_list on page {Page}", pageNo);
+                _log.LogInformation("Empty return list on page {Page}", pageNo);
                 break;
             }
 
@@ -127,15 +127,15 @@ public class ReturnRefundSyncService
 
             foreach (var retItem in returns)
             {
-                long returnSn = 0;
+                string? returnSn = null;
                 if (retItem.TryGetProperty("return_sn", out var rsnEl))
-                    returnSn = rsnEl.GetInt64();
+                    returnSn = ReadString(rsnEl);
 
                 string? orderSn = null;
                 if (retItem.TryGetProperty("order_sn", out var osnEl))
                     orderSn = osnEl.GetString();
 
-                if (returnSn == 0)
+                if (string.IsNullOrWhiteSpace(returnSn))
                 {
                     result.Skipped++;
                     continue;
@@ -145,7 +145,7 @@ public class ReturnRefundSyncService
                 var existingReturn = await _db.UnifiedReturns
                     .AsNoTracking()
                     .FirstOrDefaultAsync(r => r.Channel == "Shopee"
-                                           && r.ExternalReturnId == returnSn.ToString()
+                                           && r.ExternalReturnId == returnSn
                                            && r.ShopId == shopId, ct);
                 if (existingReturn != null
                     && !string.IsNullOrWhiteSpace(existingReturn.ReturnStatus)
@@ -235,7 +235,7 @@ public class ReturnRefundSyncService
                 string listJson;
                 try
                 {
-                    listJson = await _shopeeOrder.GetReturnListRawAsync(shopId, windowFrom, windowTo, pageNo, 50, status, ct);
+                listJson = await _shopeeOrder.GetReturnListRawAsync(shopId, windowFrom, windowTo, pageNo, 50, status, "create_time", ct);
                 }
                 catch (Exception ex)
                 {
@@ -259,8 +259,7 @@ public class ReturnRefundSyncService
                 }
 
                 if (!root.TryGetProperty("response", out var resp)) break;
-                if (!resp.TryGetProperty("return_list", out var returnList)
-                    || returnList.ValueKind != JsonValueKind.Array) break;
+                if (!TryGetReturnArray(resp, out var returnList)) break;
 
                 var returns = returnList.EnumerateArray().ToList();
                 if (returns.Count == 0) break;
@@ -278,17 +277,17 @@ public class ReturnRefundSyncService
                         continue;
 
                     foundAny = true;
-                    long returnSn = 0;
+                    string? returnSn = null;
                     if (retItem.TryGetProperty("return_sn", out var rsnEl))
-                        returnSn = rsnEl.GetInt64();
+                        returnSn = ReadString(rsnEl);
 
-                    if (returnSn == 0) { result.Skipped++; continue; }
+                    if (string.IsNullOrWhiteSpace(returnSn)) { result.Skipped++; continue; }
 
                     // ถ้า return นี้มีใน DB แล้ว และ status เป็น terminal → skip
                     var existingReturn = await _db.UnifiedReturns
                         .AsNoTracking()
                         .FirstOrDefaultAsync(r => r.Channel == "Shopee"
-                                               && r.ExternalReturnId == returnSn.ToString()
+                                               && r.ExternalReturnId == returnSn
                                                && r.ShopId == shopId, ct);
                     if (existingReturn != null
                         && !string.IsNullOrWhiteSpace(existingReturn.ReturnStatus)
@@ -368,11 +367,37 @@ public class ReturnRefundSyncService
         return (null, $"Unexpected response structure: {apiResponse[..Math.Min(200, apiResponse.Length)]}");
     }
 
+    private static bool TryGetReturnArray(JsonElement response, out JsonElement returnList)
+    {
+        if (response.TryGetProperty("return_list", out returnList) &&
+            returnList.ValueKind == JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        if (response.TryGetProperty("return", out returnList) &&
+            returnList.ValueKind == JsonValueKind.Array)
+        {
+            return true;
+        }
+
+        returnList = default;
+        return false;
+    }
+
+    private static string? ReadString(JsonElement value)
+        => value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            _ => null
+        };
+
     /// <summary>
     /// Process a single return: fetch detail, upsert UnifiedReturns, re-fetch order
     /// </summary>
     private async Task ProcessSingleReturnAsync(
-        long shopId, long returnSn, string? orderSn, CancellationToken ct)
+        long shopId, string returnSn, string? orderSn, CancellationToken ct)
     {
         // 1. Fetch return detail
         var detailJson = await _shopeeOrder.GetReturnDetailRawAsync(shopId, returnSn, ct);
@@ -391,24 +416,33 @@ public class ReturnRefundSyncService
 
         JsonElement detail;
         if (root.TryGetProperty("response", out var resp))
-            detail = resp;
+        {
+            if (resp.TryGetProperty("return", out var retObj) && retObj.ValueKind == JsonValueKind.Object)
+                detail = retObj;
+            else if (resp.TryGetProperty("return_detail", out var retDetail) && retDetail.ValueKind == JsonValueKind.Object)
+                detail = retDetail;
+            else
+                detail = resp;
+        }
         else
+        {
             detail = root;
+        }
 
         // Extract fields
-        var externalReturnId = returnSn.ToString();
+        var externalReturnId = returnSn;
         var externalOrderId = orderSn;
         if (detail.TryGetProperty("order_sn", out var osnEl2))
-            externalOrderId = osnEl2.GetString() ?? externalOrderId;
+            externalOrderId = ReadString(osnEl2) ?? externalOrderId;
 
-        var returnStatus = detail.TryGetProperty("return_status", out var rsEl) ? rsEl.GetString() : null;
-        var returnReason = detail.TryGetProperty("reason", out var rrEl) ? rrEl.GetString() : null;
+        var returnStatus = detail.TryGetProperty("return_status", out var rsEl) ? ReadString(rsEl) : null;
+        var returnReason = detail.TryGetProperty("reason", out var rrEl) ? ReadString(rrEl) : null;
         if (rrEl.ValueKind == JsonValueKind.Number)
             returnReason = rrEl.GetInt32().ToString();
-        var textReason = detail.TryGetProperty("text_reason", out var trEl) ? trEl.GetString() : null;
-        var returnType = detail.TryGetProperty("return_type", out var rtEl) ? rtEl.GetString() : null;
-        var returnSolution = detail.TryGetProperty("return_solution", out var rsolEl) ? rsolEl.GetString() : null;
-        var negotiationStatus = detail.TryGetProperty("negotiation_status", out var nsEl) ? nsEl.GetString() : null;
+        var textReason = detail.TryGetProperty("text_reason", out var trEl) ? ReadString(trEl) : null;
+        var returnType = detail.TryGetProperty("return_type", out var rtEl) ? ReadString(rtEl) : null;
+        var returnSolution = detail.TryGetProperty("return_solution", out var rsolEl) ? ReadString(rsolEl) : null;
+        var negotiationStatus = detail.TryGetProperty("negotiation_status", out var nsEl) ? ReadString(nsEl) : null;
 
         decimal? refundAmount = null;
         if (detail.TryGetProperty("refund_amount", out var raEl))

@@ -51,7 +51,11 @@ public class MarketplaceOrdersController : ControllerBase
         {
             case Platform.Shopee:
                 {
-                    var json = await _shopee.GetOrderDetailRawAsync(shopId, orderRef, ct);
+                    var json = await _shopee.GetOrderDetailRawAsync(
+                        shopId,
+                        orderRef,
+                        ct,
+                        responseOptionalFields);
                     return Content(json, "application/json");
                 }
             case Platform.Lazada:
@@ -90,6 +94,49 @@ public class MarketplaceOrdersController : ControllerBase
         return Content(json, "application/json");
     }
 
+    [HttpGet("returns/list")]
+    public async Task<IActionResult> GetReturnList(
+        [FromQuery] Platform platform,
+        [FromQuery] long shopId,
+        [FromQuery] long timeFrom,
+        [FromQuery] long timeTo,
+        [FromQuery] int pageNo = 0,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? status = null,
+        [FromQuery] string timeRangeField = "create_time",
+        CancellationToken ct = default)
+    {
+        if (platform != Platform.Shopee)
+            return BadRequest("Return list is implemented for Shopee only.");
+
+        var json = await _shopee.GetReturnListRawAsync(
+            shopId,
+            timeFrom,
+            timeTo,
+            pageNo,
+            pageSize,
+            status,
+            timeRangeField,
+            ct);
+        return Content(json, "application/json");
+    }
+
+    [HttpGet("returns/detail")]
+    public async Task<IActionResult> GetReturnDetail(
+        [FromQuery] Platform platform,
+        [FromQuery] long shopId,
+        [FromQuery] string returnSn,
+        CancellationToken ct = default)
+    {
+        if (platform != Platform.Shopee)
+            return BadRequest("Return detail is implemented for Shopee only.");
+        if (string.IsNullOrWhiteSpace(returnSn))
+            return BadRequest("returnSn is required");
+
+        var json = await _shopee.GetReturnDetailRawAsync(shopId, returnSn, ct);
+        return Content(json, "application/json");
+    }
+
     // เพิ่ม shopCipher (ใช้เฉพาะ TikTok, ส่งค่าว่างได้)
     [HttpGet("list")]
     public async Task<IActionResult> GetOrderList(
@@ -124,7 +171,8 @@ public class MarketplaceOrdersController : ControllerBase
                         pageSize: pageSize ?? 50,
                         cursor: cursor,
                         orderStatus: status,
-                        ct: ct);
+                        ct: ct,
+                        responseOptionalFields: responseOptionalFields);
                     return Content(json, "application/json");
                 }
 

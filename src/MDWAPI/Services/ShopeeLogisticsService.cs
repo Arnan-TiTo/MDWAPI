@@ -1,3 +1,4 @@
+using MDWAPI.Common;
 using MDWAPI.Helpers;
 using MDWAPI.Repos;
 using Microsoft.AspNetCore.WebUtilities;
@@ -224,12 +225,16 @@ public class ShopeeLogisticsService
     /// <summary>
     /// logistics/get_tracking_number (GET)
     /// </summary>
-    public async Task<string> GetTrackingNumberAsync(long shopId, string orderSn, CancellationToken ct = default)
+    public async Task<string> GetTrackingNumberAsync(long shopId, string orderSn, string? packageNumber = null, CancellationToken ct = default)
     {
+        var query = new Dictionary<string, string?> { ["order_sn"] = orderSn };
+        if (!string.IsNullOrWhiteSpace(packageNumber))
+            query["package_number"] = packageNumber;
+
         var (url, http) = await BuildSignedGetAsync(
             apiPath: ShopeeApiPaths.LogiGetTrackingNumber,
             shopId: shopId,
-            extraQuery: new Dictionary<string, string?> { ["order_sn"] = orderSn },
+            extraQuery: query,
             ct);
 
         var res = await http.GetAsync(url, ct);
@@ -312,34 +317,60 @@ public class ShopeeLogisticsService
     /// Fetch จาก Shopee → UPSERT ลง mdw.UnifiedOrderLabelDocument → return result_list
     /// Required: order_sn — Optional: tracking_number
     /// </summary>
-    public async Task<JsonElement> GetShippingDocumentDataInfoAsync(long shopId, string orderSn, string? trackingNumber = null, CancellationToken ct = default)
+    public async Task<(string requestUrl, JsonElement result)> GetShippingDocumentDataInfoAsync(long shopId, string orderSn, string? trackingNumber = null, CancellationToken ct = default)
     {
         var query = new Dictionary<string, string?> { ["order_sn"] = orderSn };
         if (!string.IsNullOrEmpty(trackingNumber))
             query["tracking_number"] = trackingNumber;
 
-        var (url, http) = await BuildSignedGetAsync(
-            apiPath: ShopeeApiPaths.LogiGetShippingDocDataInfo,
-            shopId: shopId,
-            extraQuery: query,
-            ct);
-
-        var res = await http.GetAsync(url, ct);
-        var body = await res.Content.ReadAsStringAsync(ct);
-        if (!res.IsSuccessStatusCode)
-            throw new HttpRequestException($"Shopee {(int)res.StatusCode}: {body}", null, res.StatusCode);
-
-        using var doc = JsonDocument.Parse(body);
-        var root = doc.RootElement.Clone();
-
-        // UPSERT: response contains shipping_document_info + recipient_address_info
-        if (root.TryGetProperty("response", out var resp))
+        string? builtUrl = null;
+        try
         {
-            try { await _labelDocRepo.UpsertAsync("Shopee", shopId, orderSn, null, resp, ct); }
-            catch (Exception ex) { _log.LogWarning(ex, "UpsertLabelDocument failed for {OrderSn}", orderSn); }
-        }
+            var (url, http) = await BuildSignedGetAsync(
+                apiPath: ShopeeApiPaths.LogiGetShippingDocDataInfo,
+                shopId: shopId,
+                extraQuery: query,
+                ct);
+            builtUrl = url;
 
-        return root;
+            var res = await http.GetAsync(url, ct);
+            var body = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+                throw new ShopeeApiException($"Shopee {(int)res.StatusCode}: {body}", res.StatusCode, url);
+
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement.Clone();
+
+            // UPSERT: response contains shipping_document_info + recipient_address_info
+            if (root.TryGetProperty("response", out var resp))
+            {
+                try { await _labelDocRepo.UpsertAsync("Shopee", shopId, orderSn, null, resp, ct); }
+                catch (Exception ex) { _log.LogWarning(ex, "UpsertLabelDocument failed for {OrderSn}", orderSn); }
+            }
+
+            return (url, root);
+        }
+        catch (ShopeeApiException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            if (builtUrl is null)
+            {
+                try
+                {
+                    var (pid, _, envCfg) = await GetPartnerFromDbAsync(shopId, ct);
+                    var host = _resolver.HostFor("shopee", envCfg);
+                    builtUrl = QueryHelpers.AddQueryString(
+                        $"{host}{ShopeeApiPaths.LogiGetShippingDocDataInfo}",
+                        new Dictionary<string, string?> { ["shop_id"] = shopId.ToString(), ["partner_id"] = pid.ToString(), ["order_sn"] = orderSn });
+                }
+                catch { /* fallthrough to path-only */ }
+            }
+            throw new ShopeeApiException(ex.Message, null,
+                builtUrl ?? $"{ShopeeApiPaths.LogiGetShippingDocDataInfo}?shop_id={shopId}&order_sn={orderSn}");
+        }
     }
 
     /// <summary>
