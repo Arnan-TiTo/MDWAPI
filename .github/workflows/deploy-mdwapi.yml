@@ -11,7 +11,7 @@ on:
 
 concurrency:
   group: deploy-mdwapi
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PROJECT_PATH: src/MDWAPI/MDWAPI.csproj
