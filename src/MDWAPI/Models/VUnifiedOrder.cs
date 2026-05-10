@@ -23,6 +23,14 @@ namespace MDWAPI.Models
         public string? BuyerUserId { get; set; }
         public string? BuyerUsername { get; set; }
 
+        public decimal? SubtotalAmount { get; set; }
+        public decimal? DiscountSellerAmount { get; set; }
+        public decimal? DiscountPlatformAmount { get; set; }
+        public decimal? VoucherAmount { get; set; }
+        public decimal? ShippingFeeAmount { get; set; }
+        public decimal? TotalAmount { get; set; }
+        public decimal? PaidAmount { get; set; }
+
         // JSON columns from the view
         public string? ItemsJson { get; set; }
         public string? PaymentsJson { get; set; }

@@ -467,10 +467,22 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         order.PlatformShippingRebate = GetDecimal(income, "shopee_shipping_rebate");
         order.CommissionFee = GetDecimal(income, "commission_fee");
         order.ServiceFee = GetDecimal(income, "service_fee");
-        order.PlatformFee = GetDecimal(income, "platform_fee");
+        order.PlatformFee = GetDecimalAny(income, "platform_fee", "seller_platform_fee", "infrastructure_fee");
         order.PaymentTransactionFee = GetDecimal(income, "seller_transaction_fee");
-        order.AmsCommissionFee = GetDecimal(income, "ams_commission_fee");
+        order.AmsCommissionFee = GetDecimalAny(income, "ams_commission_fee", "ams_affiliate_commission_fee", "affiliate_commission_fee");
         order.SellerVoucherCode = GetStringOrCsv(income, "seller_voucher_code");
+
+        var sellerDiscount = SumDecimals(
+            GetDecimal(income, "voucher_from_seller"),
+            GetDecimal(income, "seller_discount"));
+        var shopeeDiscount = SumDecimals(
+            GetDecimal(income, "voucher_from_shopee"),
+            GetDecimal(income, "shopee_discount"));
+
+        if (sellerDiscount.HasValue)
+            order.DiscountSellerAmount = sellerDiscount;
+        if (shopeeDiscount.HasValue)
+            order.DiscountPlatformAmount = shopeeDiscount;
 
         await _db.SaveChangesAsync(ct);
     }
@@ -503,6 +515,32 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         if (value.ValueKind == JsonValueKind.String &&
             decimal.TryParse(value.GetString(), out var parsed)) return parsed;
         return null;
+    }
+
+    private static decimal? GetDecimalAny(JsonElement root, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = GetDecimal(root, key);
+            if (value.HasValue) return value;
+        }
+
+        return null;
+    }
+
+    private static decimal? SumDecimals(params decimal?[] values)
+    {
+        decimal total = 0m;
+        var found = false;
+
+        foreach (var value in values)
+        {
+            if (!value.HasValue) continue;
+            total += value.Value;
+            found = true;
+        }
+
+        return found ? total : null;
     }
 
     private static string? GetStringOrCsv(JsonElement root, string key)

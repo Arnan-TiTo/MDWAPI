@@ -13,17 +13,20 @@ public class MarketplaceOrdersController : ControllerBase
     private readonly ShopeeOrderService _shopee;
     private readonly LazadaOrderService _lazada;
     private readonly TiktokOrderService _tiktok;
+    private readonly IUnifiedOrderWriter _writer;
     private readonly ILogger<MarketplaceOrdersController> _log;
 
     public MarketplaceOrdersController(
         ShopeeOrderService shopee,
         LazadaOrderService lazada,
         TiktokOrderService tiktok,
+        IUnifiedOrderWriter writer,
         ILogger<MarketplaceOrdersController> log)
     {
         _shopee = shopee;
         _lazada = lazada;
         _tiktok = tiktok;
+        _writer = writer;
         _log = log;
     }
 
@@ -91,6 +94,16 @@ public class MarketplaceOrdersController : ControllerBase
             return BadRequest("orderSn is required");
 
         var json = await _shopee.GetEscrowDetailRawAsync(shopId, orderSn, ct);
+
+        try
+        {
+            await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Shopee escrow detail fetched but sync failed for {OrderSn}", orderSn);
+        }
+
         return Content(json, "application/json");
     }
 

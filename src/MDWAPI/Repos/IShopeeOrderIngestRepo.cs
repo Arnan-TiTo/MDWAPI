@@ -217,8 +217,23 @@ VALUES
     {
         // escrowRoot = response.order_income object จาก Shopee escrow API
         static decimal? Dec(JsonElement root, string key)
-            => root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
-                ? v.GetDecimal() : (decimal?)null;
+        {
+            if (!root.TryGetProperty(key, out var v)) return null;
+            if (v.ValueKind == JsonValueKind.Number) return v.GetDecimal();
+            if (v.ValueKind == JsonValueKind.String && decimal.TryParse(v.GetString(), out var parsed)) return parsed;
+            return null;
+        }
+
+        static decimal? DecAny(JsonElement root, params string[] keys)
+        {
+            foreach (var key in keys)
+            {
+                var value = Dec(root, key);
+                if (value.HasValue) return value;
+            }
+
+            return null;
+        }
 
         static string? Str(JsonElement root, string key)
         {
@@ -261,9 +276,9 @@ WHERE OrderSn = @OrderSn;";
                 PlatformShippingRebate = Dec(escrowRoot, "shopee_shipping_rebate"),
                 CommissionFee          = Dec(escrowRoot, "commission_fee"),
                 ServiceFee             = Dec(escrowRoot, "service_fee"),
-                PlatformFee            = Dec(escrowRoot, "platform_fee"),
+                PlatformFee            = DecAny(escrowRoot, "platform_fee", "seller_platform_fee", "infrastructure_fee"),
                 PaymentTransactionFee  = Dec(escrowRoot, "seller_transaction_fee"),
-                AmsCommissionFee       = Dec(escrowRoot, "ams_commission_fee"),
+                AmsCommissionFee       = DecAny(escrowRoot, "ams_commission_fee", "ams_affiliate_commission_fee", "affiliate_commission_fee"),
                 SellerVoucherCode      = Str(escrowRoot, "seller_voucher_code")
             }, cancellationToken: ct));
         }
