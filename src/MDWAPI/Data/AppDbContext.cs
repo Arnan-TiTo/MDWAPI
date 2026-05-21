@@ -16,9 +16,6 @@ public class AppDbContext : DbContext
     public DbSet<MkpToken> MkpTokens => Set<MkpToken>();
     public DbSet<Shops> Shops => Set<Shops>();
     public DbSet<Partners> Partners => Set<Partners>();
-    public DbSet<ShopeeOrder> ShopeeOrders => Set<ShopeeOrder>();
-    public DbSet<ShopeeOrderItem> ShopeeOrderItems => Set<ShopeeOrderItem>();
-
     //UnifiedOrders
     public DbSet<UnifiedRawOrders> UnifiedRawOrders => Set<UnifiedRawOrders>();
     public DbSet<UnifiedOrderTrans> UnifiedOrderTrans => Set<UnifiedOrderTrans>();
@@ -678,12 +675,6 @@ public class AppDbContext : DbContext
         {
             e.Property(x => x.Latitude).HasPrecision(9, 6);
             e.Property(x => x.Longitude).HasPrecision(9, 6);
-        });
-
-        // ShopeeOrderItem — WeightKg ใช้ precision พิเศษ
-        modelBuilder.Entity<ShopeeOrderItem>(e =>
-        {
-            e.Property(x => x.WeightKg).HasPrecision(10, 3);
         });
 
         // ── Global decimal precision default (18,2) สำหรับทุก decimal ที่ยังไม่ได้กำหนด ──

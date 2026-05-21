@@ -455,34 +455,43 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             throw new ArgumentException("escrowJson is required", nameof(escrowJson));
 
         using var doc = JsonDocument.Parse(escrowJson);
-        var income = ExtractShopeeOrderIncome(doc.RootElement);
+        var root = doc.RootElement;
+        var income = ExtractShopeeOrderIncome(root);
+        var buyerPayment = ExtractShopeeBuyerPaymentInfo(root);
 
         var order = await _db.UnifiedOrders
             .FirstOrDefaultAsync(x => x.Channel == "Shopee" && x.ExternalOrderId == orderSn, ct)
             ?? throw new InvalidOperationException($"Shopee order not found in UnifiedOrders: {orderSn}");
 
+        order.PayloadEscrowJson = escrowJson;
         order.EscrowAmount = GetDecimal(income, "escrow_amount");
         order.BuyerPaidShippingFee = GetDecimal(income, "buyer_paid_shipping_fee");
         order.ActualShippingFee = GetDecimal(income, "actual_shipping_fee");
         order.PlatformShippingRebate = GetDecimal(income, "shopee_shipping_rebate");
-        order.CommissionFee = GetDecimal(income, "commission_fee");
-        order.ServiceFee = GetDecimal(income, "service_fee");
-        order.PlatformFee = GetDecimalAny(income, "platform_fee", "seller_platform_fee", "infrastructure_fee");
-        order.PaymentTransactionFee = GetDecimal(income, "seller_transaction_fee");
-        order.AmsCommissionFee = GetDecimalAny(income, "ams_commission_fee", "ams_affiliate_commission_fee", "affiliate_commission_fee");
+        order.CommissionFee = FeeAmount(GetDecimal(income, "commission_fee"));
+        order.ServiceFee = FeeAmount(GetDecimal(income, "service_fee"));
+        order.PlatformFee = FeeAmount(GetDecimalAnyNonZeroFirst(income, "platform_fee", "seller_platform_fee", "infrastructure_fee", "campaign_fee", "seller_order_processing_fee"));
+        order.PaymentTransactionFee = FeeAmount(GetDecimalAny(income, "seller_transaction_fee", "credit_card_transaction_fee"));
+        order.AmsCommissionFee = FeeAmount(GetDecimalAny(income, "order_ams_commission_fee", "ams_commission_fee", "ams_affiliate_commission_fee", "affiliate_commission_fee")
+            ?? SumItemDecimals(income, "ams_commission_fee"));
         order.SellerVoucherCode = GetStringOrCsv(income, "seller_voucher_code");
 
-        var sellerDiscount = SumDecimals(
-            GetDecimal(income, "voucher_from_seller"),
-            GetDecimal(income, "seller_discount"));
-        var shopeeDiscount = SumDecimals(
-            GetDecimal(income, "voucher_from_shopee"),
-            GetDecimal(income, "shopee_discount"));
+        var sellerDiscount = SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "seller_discount"))
+            ?? SumItemDecimals(income, "discount_from_voucher_seller")
+            ?? Abs(GetDecimal(buyerPayment, "seller_voucher"));
+        var shopeeDiscount = SumDecimals(GetDecimal(income, "voucher_from_shopee"), GetDecimal(income, "shopee_discount"), GetDecimal(income, "original_shopee_discount"))
+            ?? SumItemDecimals(income, "discount_from_voucher_shopee")
+            ?? Abs(GetDecimal(buyerPayment, "shopee_voucher"));
+        var voucherAmount = GetDecimal(income, "voucher_amount")
+            ?? SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "voucher_from_shopee"))
+            ?? SumDecimals(Abs(GetDecimal(buyerPayment, "seller_voucher")), Abs(GetDecimal(buyerPayment, "shopee_voucher")));
 
         if (sellerDiscount.HasValue)
             order.DiscountSellerAmount = sellerDiscount;
         if (shopeeDiscount.HasValue)
             order.DiscountPlatformAmount = shopeeDiscount;
+        if (voucherAmount.HasValue)
+            order.VoucherAmount = voucherAmount;
 
         await _db.SaveChangesAsync(ct);
     }
@@ -508,6 +517,33 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         throw new ArgumentException("Shopee escrow payload missing response.order_income");
     }
 
+    private static JsonElement? ExtractShopeeBuyerPaymentInfo(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("response", out var response) &&
+            response.ValueKind == JsonValueKind.Object &&
+            response.TryGetProperty("buyer_payment_info", out var buyerPayment) &&
+            buyerPayment.ValueKind == JsonValueKind.Object)
+        {
+            return buyerPayment;
+        }
+
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("buyer_payment_info", out var directBuyerPayment) &&
+            directBuyerPayment.ValueKind == JsonValueKind.Object)
+        {
+            return directBuyerPayment;
+        }
+
+        return null;
+    }
+
+    private static decimal? GetDecimal(JsonElement? root, string key)
+    {
+        if (root is null) return null;
+        return GetDecimal(root.Value, key);
+    }
+
     private static decimal? GetDecimal(JsonElement root, string key)
     {
         if (!root.TryGetProperty(key, out var value)) return null;
@@ -515,6 +551,31 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         if (value.ValueKind == JsonValueKind.String &&
             decimal.TryParse(value.GetString(), out var parsed)) return parsed;
         return null;
+    }
+
+    private static decimal? Abs(decimal? value)
+        => value.HasValue ? Math.Abs(value.Value) : null;
+
+    private static decimal? FeeAmount(decimal? value)
+        => Abs(value);
+
+    private static decimal? SumItemDecimals(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+            return null;
+
+        decimal total = 0m;
+        var found = false;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            var value = GetDecimal(item, key);
+            if (!value.HasValue) continue;
+            total += value.Value;
+            found = true;
+        }
+
+        return found ? total : null;
     }
 
     private static decimal? GetDecimalAny(JsonElement root, params string[] keys)
@@ -526,6 +587,21 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         }
 
         return null;
+    }
+
+    private static decimal? GetDecimalAnyNonZeroFirst(JsonElement root, params string[] keys)
+    {
+        decimal? zeroValue = null;
+
+        foreach (var key in keys)
+        {
+            var value = GetDecimal(root, key);
+            if (!value.HasValue) continue;
+            if (value.Value != 0m) return value;
+            zeroValue ??= value;
+        }
+
+        return zeroValue;
     }
 
     private static decimal? SumDecimals(params decimal?[] values)

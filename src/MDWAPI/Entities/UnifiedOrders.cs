@@ -42,6 +42,7 @@ public class UnifiedOrders
     public decimal? PaymentTransactionFee { get; set; }     // ค่าธุรกรรมการชำระเงิน
     public decimal? AmsCommissionFee { get; set; }          // ค่าคอมมิชชั่น AMS
     [MaxLength(500)] public string? SellerVoucherCode { get; set; }  // โค้ดส่วนลดร้านค้า
+    public string? PayloadEscrowJson { get; set; }          // raw escrow payload จาก platform
 
     [MaxLength(60)] public string? PaymentMethod { get; set; }
     [MaxLength(120)] public string? ShipmentProvider { get; set; }

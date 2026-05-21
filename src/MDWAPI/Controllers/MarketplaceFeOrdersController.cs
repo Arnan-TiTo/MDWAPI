@@ -1,4 +1,6 @@
-﻿using MDWAPI.Data;
+using MDWAPI.Data;
+using MDWAPI.Models;
+using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,10 +14,19 @@ namespace MDWAPI.Controllers
     {
         private readonly AppDbContext _db;
         private readonly ILogger<MarketplaceFeOrdersController> _log;
+        private readonly ShopeeOrderService _shopee;
+        private readonly IUnifiedOrderWriter _writer;
 
-        public MarketplaceFeOrdersController(AppDbContext db, ILogger<MarketplaceFeOrdersController> log)
+        public MarketplaceFeOrdersController(
+            AppDbContext db,
+            ILogger<MarketplaceFeOrdersController> log,
+            ShopeeOrderService shopee,
+            IUnifiedOrderWriter writer)
         {
-            _db = db; _log = log;
+            _db = db;
+            _log = log;
+            _shopee = shopee;
+            _writer = writer;
         }
 
         // ====== DTOs ======
@@ -23,10 +34,10 @@ namespace MDWAPI.Controllers
             long UnifiedOrderId,
             string? ExternalOrderNo,
             string? Channel,
-            long ShopId,
+            long? ShopId,
             string? SellerId,
             string? OrderStatus,
-            DateTime CreatedTimeUtc,
+            DateTime? CreatedTimeUtc,
             DateTime? UpdatedTimeUtc,
             string? BuyerUserId,
             string? BuyerUsername,
@@ -51,6 +62,34 @@ namespace MDWAPI.Controllers
             decimal? PlatformFee,
             decimal? PaymentTransactionFee,
             decimal? AmsCommissionFee,
+            string? SellerVoucherCode,
+            FlowAccountAmountsDto FlowAccountAmounts,
+            ReconciliationAmountsDto ReconciliationAmounts
+        );
+
+        public sealed record FlowAccountAmountsDto(
+            decimal GrossAmount,
+            decimal SellerDiscountAmount,
+            decimal NetAfterSellerDiscountAmount,
+            decimal PlatformDiscountAmount,
+            decimal AmountDue,
+            decimal ShippingFeeAmount,
+            decimal TaxAmount,
+            decimal GrandTotalAmount
+        );
+
+        public sealed record ReconciliationAmountsDto(
+            decimal EscrowAmount,
+            decimal BuyerPaidShippingFee,
+            decimal ActualShippingFee,
+            decimal PlatformShippingRebate,
+            decimal CommissionFee,
+            decimal ServiceFee,
+            decimal PlatformFee,
+            decimal PaymentTransactionFee,
+            decimal AmsCommissionFee,
+            decimal TotalFeeAmount,
+            decimal NetPayoutAmount,
             string? SellerVoucherCode
         );
 
@@ -135,43 +174,12 @@ namespace MDWAPI.Controllers
 
             var total = await qy.CountAsync(ct);
 
-            var data = await qy
+            var pageRows = await qy
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(o => new UnifiedOrderListItemDto(
-                    o.UnifiedOrderId,
-                    o.ExternalOrderNo,
-                    o.Channel,
-                    o.ShopId,
-                    o.SellerId,
-                    o.OrderStatus,
-                    o.CreatedTimeUtc,
-                    o.UpdatedTimeUtc,
-                    o.BuyerUserId,
-                    o.BuyerUsername,
-                    o.SubtotalAmount,
-                    o.DiscountSellerAmount,
-                    o.DiscountPlatformAmount,
-                    o.VoucherAmount,
-                    o.ShippingFeeAmount,
-                    o.TotalAmount,
-                    o.PaidAmount,
-                    o.ItemsJson,
-                    o.PaymentsJson,
-                    o.ShipmentsJson,
-                    o.ShipToJson,
-                    o.EscrowAmount,
-                    o.BuyerPaidShippingFee,
-                    o.ActualShippingFee,
-                    o.PlatformShippingRebate,
-                    o.CommissionFee,
-                    o.ServiceFee,
-                    o.PlatformFee,
-                    o.PaymentTransactionFee,
-                    o.AmsCommissionFee,
-                    o.SellerVoucherCode
-                ))
                 .ToListAsync(ct);
+
+            var data = pageRows.Select(ToListItemDto).ToList();
 
             // *** ตรงกับ PagedResult ของ FE ***
             return Ok(new PagedResult<UnifiedOrderListItemDto>(
@@ -189,43 +197,10 @@ namespace MDWAPI.Controllers
         {
             var o = await _db.VUnifiedOrders.AsNoTracking()
                 .Where(x => x.UnifiedOrderId == id)
-                .Select(x => new UnifiedOrderListItemDto(
-                    x.UnifiedOrderId,
-                    x.ExternalOrderNo,
-                    x.Channel,
-                    x.ShopId,
-                    x.SellerId,
-                    x.OrderStatus,
-                    x.CreatedTimeUtc,
-                    x.UpdatedTimeUtc,
-                    x.BuyerUserId,
-                    x.BuyerUsername,
-                    x.SubtotalAmount,
-                    x.DiscountSellerAmount,
-                    x.DiscountPlatformAmount,
-                    x.VoucherAmount,
-                    x.ShippingFeeAmount,
-                    x.TotalAmount,
-                    x.PaidAmount,
-                    x.ItemsJson,
-                    x.PaymentsJson,
-                    x.ShipmentsJson,
-                    x.ShipToJson,
-                    x.EscrowAmount,
-                    x.BuyerPaidShippingFee,
-                    x.ActualShippingFee,
-                    x.PlatformShippingRebate,
-                    x.CommissionFee,
-                    x.ServiceFee,
-                    x.PlatformFee,
-                    x.PaymentTransactionFee,
-                    x.AmsCommissionFee,
-                    x.SellerVoucherCode
-                ))
                 .SingleOrDefaultAsync(ct);
 
             if (o is null) return NotFound();
-            return Ok(o);
+            return Ok(ToListItemDto(o));
         }
 
         // ====== GET by (Channel + ExternalOrderNo) ======
@@ -239,43 +214,131 @@ namespace MDWAPI.Controllers
 
             var o = await _db.VUnifiedOrders.AsNoTracking()
                 .Where(x => x.Channel == channel && x.ExternalOrderNo == externalOrderNo)
-                .Select(x => new UnifiedOrderListItemDto(
-                    x.UnifiedOrderId,
-                    x.ExternalOrderNo,
-                    x.Channel,
-                    x.ShopId,
-                    x.SellerId,
-                    x.OrderStatus,
-                    x.CreatedTimeUtc,
-                    x.UpdatedTimeUtc,
-                    x.BuyerUserId,
-                    x.BuyerUsername,
-                    x.SubtotalAmount,
-                    x.DiscountSellerAmount,
-                    x.DiscountPlatformAmount,
-                    x.VoucherAmount,
-                    x.ShippingFeeAmount,
-                    x.TotalAmount,
-                    x.PaidAmount,
-                    x.ItemsJson,
-                    x.PaymentsJson,
-                    x.ShipmentsJson,
-                    x.ShipToJson,
-                    x.EscrowAmount,
-                    x.BuyerPaidShippingFee,
-                    x.ActualShippingFee,
-                    x.PlatformShippingRebate,
-                    x.CommissionFee,
-                    x.ServiceFee,
-                    x.PlatformFee,
-                    x.PaymentTransactionFee,
-                    x.AmsCommissionFee,
-                    x.SellerVoucherCode
-                ))
                 .SingleOrDefaultAsync(ct);
 
             if (o is null) return NotFound();
-            return Ok(o);
+            return Ok(ToListItemDto(o));
         }
+
+        // POST /api/fe/orders/20014/sync-shopee-escrow
+        [HttpPost("{id:long}/sync-shopee-escrow")]
+        public async Task<ActionResult<UnifiedOrderListItemDto>> SyncShopeeEscrow(long id, CancellationToken ct)
+        {
+            var order = await _db.VUnifiedOrders.AsNoTracking()
+                .Where(x => x.UnifiedOrderId == id)
+                .SingleOrDefaultAsync(ct);
+
+            if (order is null) return NotFound();
+            if (!string.Equals(order.Channel, "Shopee", StringComparison.OrdinalIgnoreCase))
+                return BadRequest("sync-shopee-escrow supports Shopee orders only.");
+            if (order.ShopId is null or <= 0)
+                return BadRequest("Shopee shopId is missing.");
+            if (string.IsNullOrWhiteSpace(order.ExternalOrderNo))
+                return BadRequest("Shopee order number is missing.");
+
+            var json = await _shopee.GetEscrowDetailRawAsync(order.ShopId.Value, order.ExternalOrderNo, ct);
+            await _writer.UpsertShopeeEscrowAsync(order.ExternalOrderNo, json, ct);
+
+            var updated = await _db.VUnifiedOrders.AsNoTracking()
+                .Where(x => x.UnifiedOrderId == id)
+                .SingleAsync(ct);
+
+            return Ok(ToListItemDto(updated));
+        }
+
+        private static UnifiedOrderListItemDto ToListItemDto(VUnifiedOrder o)
+        {
+            var flow = BuildFlowAccountAmounts(o);
+            var reconciliation = BuildReconciliationAmounts(o);
+
+            return new UnifiedOrderListItemDto(
+                o.UnifiedOrderId,
+                o.ExternalOrderNo,
+                o.Channel,
+                o.ShopId,
+                o.SellerId,
+                o.OrderStatus,
+                o.CreatedTimeUtc,
+                o.UpdatedTimeUtc,
+                o.BuyerUserId,
+                o.BuyerUsername,
+                o.SubtotalAmount,
+                o.DiscountSellerAmount,
+                o.DiscountPlatformAmount,
+                o.VoucherAmount,
+                o.ShippingFeeAmount,
+                o.TotalAmount,
+                o.PaidAmount,
+                o.ItemsJson,
+                o.PaymentsJson,
+                o.ShipmentsJson,
+                o.ShipToJson,
+                o.EscrowAmount,
+                o.BuyerPaidShippingFee,
+                o.ActualShippingFee,
+                o.PlatformShippingRebate,
+                o.CommissionFee,
+                o.ServiceFee,
+                o.PlatformFee,
+                o.PaymentTransactionFee,
+                o.AmsCommissionFee,
+                o.SellerVoucherCode,
+                flow,
+                reconciliation
+            );
+        }
+
+        private static FlowAccountAmountsDto BuildFlowAccountAmounts(VUnifiedOrder o)
+        {
+            var gross = Money(o.SubtotalAmount);
+            var sellerDiscount = Money(o.DiscountSellerAmount);
+            var platformDiscount = o.DiscountPlatformAmount.HasValue
+                ? Money(o.DiscountPlatformAmount)
+                : Money(o.VoucherAmount);
+            var shippingFee = Money(o.ShippingFeeAmount);
+            var amountDue = Money(o.PaidAmount ?? o.TotalAmount);
+            var netAfterSellerDiscount = gross - sellerDiscount;
+            var tax = 0m;
+
+            return new FlowAccountAmountsDto(
+                GrossAmount: gross,
+                SellerDiscountAmount: sellerDiscount,
+                NetAfterSellerDiscountAmount: netAfterSellerDiscount,
+                PlatformDiscountAmount: platformDiscount,
+                AmountDue: amountDue,
+                ShippingFeeAmount: shippingFee,
+                TaxAmount: tax,
+                GrandTotalAmount: amountDue
+            );
+        }
+
+        private static ReconciliationAmountsDto BuildReconciliationAmounts(VUnifiedOrder o)
+        {
+            var commissionFee = FeeMoney(o.CommissionFee);
+            var serviceFee = FeeMoney(o.ServiceFee);
+            var platformFee = FeeMoney(o.PlatformFee);
+            var paymentTransactionFee = FeeMoney(o.PaymentTransactionFee);
+            var amsCommissionFee = FeeMoney(o.AmsCommissionFee);
+            var totalFee = commissionFee + serviceFee + platformFee + paymentTransactionFee + amsCommissionFee;
+
+            return new ReconciliationAmountsDto(
+                EscrowAmount: Money(o.EscrowAmount),
+                BuyerPaidShippingFee: Money(o.BuyerPaidShippingFee),
+                ActualShippingFee: Money(o.ActualShippingFee),
+                PlatformShippingRebate: Money(o.PlatformShippingRebate),
+                CommissionFee: commissionFee,
+                ServiceFee: serviceFee,
+                PlatformFee: platformFee,
+                PaymentTransactionFee: paymentTransactionFee,
+                AmsCommissionFee: amsCommissionFee,
+                TotalFeeAmount: totalFee,
+                NetPayoutAmount: Money(o.EscrowAmount),
+                SellerVoucherCode: o.SellerVoucherCode
+            );
+        }
+
+        private static decimal Money(decimal? value) => decimal.Round(value ?? 0m, 2);
+
+        private static decimal FeeMoney(decimal? value) => decimal.Round(Math.Abs(value ?? 0m), 2);
     }
 }

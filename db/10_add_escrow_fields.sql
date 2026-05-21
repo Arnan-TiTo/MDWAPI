@@ -4,19 +4,36 @@
 -- Source: Shopee /api/v2/payment/get_escrow_detail → order_income
 -- ============================================================
 
--- ─── 1. mdw.ShopeeOrders ────────────────────────────────────
-ALTER TABLE mdw.ShopeeOrders ADD
-    EscrowAmount           DECIMAL(18,4) NULL,  -- escrow_amount (รายรับจากคำสั่งซื้อ)
-    BuyerPaidShippingFee   DECIMAL(18,4) NULL,  -- buyer_paid_shipping_fee
-    ActualShippingFee      DECIMAL(18,4) NULL,  -- actual_shipping_fee
-    PlatformShippingRebate DECIMAL(18,4) NULL,  -- shopee_shipping_rebate
-    CommissionFee          DECIMAL(18,4) NULL,  -- commission_fee (ค่าคอมมิชชั่น)
-    ServiceFee             DECIMAL(18,4) NULL,  -- service_fee (ค่าบริการ)
-    PlatformFee            DECIMAL(18,4) NULL,  -- platform_fee (ค่าธรรมเนียมโครงสร้างพื้นฐาน)
-    PaymentTransactionFee  DECIMAL(18,4) NULL,  -- seller_transaction_fee (ค่าธุรกรรม)
-    AmsCommissionFee       DECIMAL(18,4) NULL,  -- ams_commission_fee
-    SellerVoucherCode      NVARCHAR(500) NULL,  -- seller_voucher_code (อาจมีหลาย code คั่นด้วย ,)
-    EscrowUpdatedAt        DATETIME2 NULL;      -- เวลาที่ดึงข้อมูล escrow ล่าสุด
+-- ─── 1. mdw.ShopeeOrders (legacy, optional) ─────────────────
+-- ShopeeOrders is no longer part of the active UnifiedOrders flow.
+-- Keep this section guarded so older DBs can still be patched without
+-- breaking new DBs that never created mdw.ShopeeOrders.
+IF OBJECT_ID('mdw.ShopeeOrders', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('mdw.ShopeeOrders', 'EscrowAmount') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD EscrowAmount DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'BuyerPaidShippingFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD BuyerPaidShippingFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'ActualShippingFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD ActualShippingFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'PlatformShippingRebate') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD PlatformShippingRebate DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'CommissionFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD CommissionFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'ServiceFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD ServiceFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'PlatformFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD PlatformFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'PaymentTransactionFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD PaymentTransactionFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'AmsCommissionFee') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD AmsCommissionFee DECIMAL(18,4) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'SellerVoucherCode') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD SellerVoucherCode NVARCHAR(500) NULL;
+    IF COL_LENGTH('mdw.ShopeeOrders', 'EscrowUpdatedAt') IS NULL
+        ALTER TABLE mdw.ShopeeOrders ADD EscrowUpdatedAt DATETIME2 NULL;
+END
+GO
 
 -- ─── 2. mdw.UnifiedOrders ───────────────────────────────────
 ALTER TABLE mdw.UnifiedOrders ADD

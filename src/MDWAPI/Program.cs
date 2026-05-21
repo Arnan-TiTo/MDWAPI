@@ -12,6 +12,10 @@ using Microsoft.OpenApi.Models;
 using System.Net;
 using System.Net.Http.Headers;
 
+// Use polling instead of inotify so local/dev servers can start on machines
+// that have already reached the Linux inotify watcher limit.
+Environment.SetEnvironmentVariable("DOTNET_USE_POLLING_FILE_WATCHER", "true");
+
 var builder = WebApplication.CreateBuilder(args);
 
 // === Register Encoding ===
@@ -19,8 +23,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
-//  ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
- ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+ ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+//  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin:9999;TrustServerCertificate=True;";
 //  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=V&Cdocker;TrustServerCertificate=True;";
 
 builder.Services.AddDbContext<AppDbContext>(
@@ -68,9 +72,7 @@ builder.Services.AddScoped<TiktokOrderService>();
 builder.Services.AddHttpClient<TikTokAuthService>();
 
 builder.Services.AddScoped<ShopeeTokenRefreshService>();
-builder.Services.AddScoped<IShopeeOrderIngestRepo, ShopeeOrderIngestRepo>();
 builder.Services.AddScoped<IUnifiedOrderLabelDocumentRepo, UnifiedOrderLabelDocumentRepo>();
-builder.Services.AddScoped<ShopeeOrderIngestService>();
 
 builder.Services.AddScoped<OcrService>();
 builder.Services.AddScoped<ShopeeLogisticsService>();

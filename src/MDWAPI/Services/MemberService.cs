@@ -620,9 +620,9 @@ public class MemberService
             using var reader = new StreamReader(stream);
             var headerLine = await reader.ReadLineAsync(); // Skip header
             
-            while (!reader.EndOfStream)
+            string? line;
+            while ((line = await reader.ReadLineAsync()) != null)
             {
-                var line = await reader.ReadLineAsync();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 // Simple CSV split (note: doesn't handle escaped commas in quotes if any, but let's assume standard for now)
@@ -941,9 +941,9 @@ public class MemberService
         var idxEmail = GetIdx("Email", "อีเมล");
         var idxLineId = GetIdx("User Id", "LineUserId");
 
-        while (!reader.EndOfStream)
+        string? line;
+        while ((line = await reader.ReadLineAsync()) != null)
         {
-            var line = await reader.ReadLineAsync();
             if (string.IsNullOrWhiteSpace(line)) continue;
             var parts = line.Split(','); 
 
