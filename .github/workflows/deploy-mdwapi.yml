@@ -9,22 +9,23 @@ on:
       - ".github/workflows/deploy-mdwapi.yml"
   workflow_dispatch:
 
-concurrency:
-  group: deploy-mdwapi
-  cancel-in-progress: true
-
-env:
-  PROJECT_PATH: src/MDWAPI/MDWAPI.csproj
-  PUBLISH_DIR: ${{ github.workspace }}/artifacts/mdwapi-publish
-  DEPLOY_DIR: /opt/mdwapi
-  SERVICE_NAME: mdwapi
-  APP_URLS: http://0.0.0.0:7192
-
 jobs:
   deploy:
     name: Build and deploy MDWAPI
-    runs-on: self-hosted
+    runs-on:
+      - self-hosted
+      - mdwapi
     timeout-minutes: 30
+    concurrency:
+      group: deploy-mdwapi
+      cancel-in-progress: true
+
+    env:
+      PROJECT_PATH: src/MDWAPI/MDWAPI.csproj
+      PUBLISH_DIR: ${{ github.workspace }}/artifacts/mdwapi-publish
+      DEPLOY_DIR: /opt/mdwapi
+      SERVICE_NAME: mdwapi
+      HEALTH_URL: http://127.0.0.1:7192/health
 
     steps:
       - name: Checkout
@@ -43,7 +44,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$DEPLOY_DIR"
+          sudo -n mkdir -p "$DEPLOY_DIR"
+          sudo -n chown -R "$USER" "$DEPLOY_DIR"
 
       - name: Deploy published files
         shell: bash
@@ -65,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in {1..20}; do
-            if curl -fsS "http://127.0.0.1:7192/health"; then
+            if curl -fsS "$HEALTH_URL"; then
               exit 0
             fi
             sleep 3
