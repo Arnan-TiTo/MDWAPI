@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "src/MDWAPI/**"
-      - ".github/workflows/deploy-mdwapi.yml"
   workflow_dispatch:
 
 jobs:
