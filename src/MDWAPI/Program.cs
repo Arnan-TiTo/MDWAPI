@@ -23,7 +23,7 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
- ?? "Server=10.10.14.103,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
+ ?? "Server=10.10.14.102,1433;Database=VCINDW;User Id=dev_mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
 //  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin:9999;TrustServerCertificate=True;";
 //  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=V&Cdocker;TrustServerCertificate=True;";
 
