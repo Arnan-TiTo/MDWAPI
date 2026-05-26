@@ -51,24 +51,37 @@ public class LineController : ControllerBase
         [FromQuery] string? liffId = null,
         [FromQuery] string? domain = null)
     {
-        var query = _db.LineOaConfigs.Where(c => c.IsActive);
+        try
+        {
+            var query = _db.LineOaConfigs.Where(c => c.IsActive);
 
-        if (companyId.HasValue)
-            query = query.Where(c => c.CompanysId == companyId.Value);
-        else if (!string.IsNullOrEmpty(liffId))
-            query = query.Where(c => c.LiffId == liffId);
-        else if (!string.IsNullOrEmpty(domain))
-            query = query.Where(c => c.LoginCallbackUrl != null && c.LoginCallbackUrl.Contains(domain));
-        // else: ไม่มี param → ใช้ตัวแรกที่ active
+            if (companyId.HasValue)
+                query = query.Where(c => c.CompanysId == companyId.Value);
+            else if (!string.IsNullOrEmpty(liffId))
+                query = query.Where(c => c.LiffId == liffId);
+            else if (!string.IsNullOrEmpty(domain))
+                query = query.Where(c => c.LoginCallbackUrl != null && c.LoginCallbackUrl.Contains(domain));
+            // else: ไม่มี param → ใช้ตัวแรกที่ active
 
-        var config = await query
-            .Select(c => new { c.LiffId, c.LoginChannelId, c.LineOaName, c.CompanysId })
-            .FirstOrDefaultAsync();
+            var config = await query
+                .Select(c => new { c.LiffId, c.LoginChannelId, c.LineOaName, c.CompanysId })
+                .FirstOrDefaultAsync();
 
-        if (config == null)
-            return Ok(new { liffId = (string?)null, loginChannelId = (string?)null, companyId = (int?)null });
+            if (config == null)
+                return Ok(new { liffId = (string?)null, loginChannelId = (string?)null, companyId = (int?)null });
 
-        return Ok(new { liffId = config.LiffId, loginChannelId = config.LoginChannelId, oaName = config.LineOaName, companyId = config.CompanysId });
+            return Ok(new { liffId = config.LiffId, loginChannelId = config.LoginChannelId, oaName = config.LineOaName, companyId = config.CompanysId });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load LINE config");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "LINE config database lookup failed",
+                exception = ex.GetType().Name,
+                message = ex.Message
+            });
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -80,11 +93,24 @@ public class LineController : ControllerBase
     /// GET /api/line/login → redirect to LINE
     /// </summary>
     [HttpGet("login")]
-    public IActionResult Login([FromQuery] string? redirectAfter = null)
+    public async Task<IActionResult> Login([FromQuery] string? redirectAfter = null)
     {
         var state = redirectAfter ?? "default";
-        var url = _lineLogin.GetAuthorizationUrl(state);
+        var url = await _lineLogin.GetAuthorizationUrlAsync(state);
+
+        if (string.IsNullOrWhiteSpace(url))
+            return BadRequest(new { error = "LINE Login config is missing" });
+
+        if (IsSwaggerRequest())
+            return Ok(new { authorizationUrl = url });
+
         return Redirect(url);
+    }
+
+    private bool IsSwaggerRequest()
+    {
+        var referer = Request.Headers.Referer.ToString();
+        return referer.Contains("/swagger/", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

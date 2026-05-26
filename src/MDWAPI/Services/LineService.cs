@@ -51,6 +51,9 @@ public class LineLoginService
         state ??= Guid.NewGuid().ToString("N");
         var channelId = GetChannelId();
         var callbackUrl = GetCallbackUrl();
+        if (string.IsNullOrWhiteSpace(channelId) || string.IsNullOrWhiteSpace(callbackUrl))
+            return "";
+
         var url = "https://access.line.me/oauth2/v2.1/authorize"
             + $"?response_type=code"
             + $"&client_id={channelId}"
@@ -73,6 +76,9 @@ public class LineLoginService
         state ??= Guid.NewGuid().ToString("N");
         var channelId = GetChannelId();
         var callbackUrl = GetCallbackUrl();
+        if (string.IsNullOrWhiteSpace(channelId) || string.IsNullOrWhiteSpace(callbackUrl))
+            return "";
+
         var url = "https://access.line.me/oauth2/v2.1/authorize"
             + $"?response_type=code"
             + $"&client_id={channelId}"
