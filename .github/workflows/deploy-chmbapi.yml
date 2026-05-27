@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+    paths:
+      - .github/workflows/deploy-chmbapi.yml
+      - src/CHMBAPI/**
+      - deploy/CHMBAPI.md
+      - deploy/chmbapi.service
+      - scripts/setup-chmbapi-runner.sh
   workflow_dispatch:
 
 jobs:
