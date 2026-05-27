@@ -7,6 +7,7 @@ RUNNER_VERSION="${RUNNER_VERSION:-2.333.1}"
 RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner-chmbapi}"
 RUNNER_NAME="${RUNNER_NAME:-chmbapi-runner}"
 RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,chmbapi}"
+RUNNER_GROUP="${RUNNER_GROUP:-$(id -gn)}"
 
 if [[ -z "$RUNNER_TOKEN" ]]; then
   echo "RUNNER_TOKEN is required." >&2
@@ -39,7 +40,7 @@ RUNNER_PACKAGE="actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
 RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_PACKAGE}"
 
 sudo mkdir -p "$RUNNER_DIR"
-sudo chown -R "$USER":"$USER" "$RUNNER_DIR"
+sudo chown -R "$USER":"$RUNNER_GROUP" "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
 if [[ ! -f ./config.sh ]]; then
