@@ -1,0 +1,17 @@
+[Unit]
+Description=CHMBAPI ASP.NET Core service
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/chmbapi
+ExecStart=/usr/bin/dotnet /opt/chmbapi/CHMBAPI.dll
+Restart=always
+RestartSec=10
+KillSignal=SIGINT
+SyslogIdentifier=chmbapi
+User=www-data
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://127.0.0.1:7292
+
+[Install]
+WantedBy=multi-user.target

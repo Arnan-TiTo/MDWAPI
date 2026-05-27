@@ -1,0 +1,74 @@
+name: Deploy CHMBAPI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build and deploy CHMBAPI
+    runs-on:
+      - self-hosted
+      - chmbapi
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-chmbapi
+      cancel-in-progress: true
+
+    env:
+      PROJECT_PATH: src/CHMBAPI/CHMBAPI.csproj
+      PUBLISH_DIR: ${{ github.workspace }}/artifacts/chmbapi-publish
+      DEPLOY_DIR: /opt/chmbapi
+      SERVICE_NAME: chmbapi
+      HEALTH_URL: http://127.0.0.1:7292/health
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check .NET
+        run: dotnet --info
+
+      - name: Restore
+        run: dotnet restore "$PROJECT_PATH"
+
+      - name: Publish
+        run: dotnet publish "$PROJECT_PATH" --configuration Release --no-restore --output "$PUBLISH_DIR"
+
+      - name: Prepare deploy directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n mkdir -p "$DEPLOY_DIR"
+          sudo -n chown -R "$USER" "$DEPLOY_DIR"
+
+      - name: Deploy published files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete \
+            --exclude appsettings.Production.json \
+            "$PUBLISH_DIR"/ "$DEPLOY_DIR"/
+
+      - name: Restart service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n systemctl restart "$SERVICE_NAME"
+          sudo -n systemctl status "$SERVICE_NAME" --no-pager
+
+      - name: Health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in {1..20}; do
+            if curl -fsS "$HEALTH_URL"; then
+              exit 0
+            fi
+            sleep 3
+          done
+
+          sudo -n journalctl -u "$SERVICE_NAME" -n 100 --no-pager
+          exit 1
