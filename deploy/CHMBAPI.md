@@ -29,4 +29,6 @@ sudo systemctl status chmbapi --no-pager
 ```
 
 The GitHub Actions workflow publishes to `/opt/chmbapi`, restarts `chmbapi`,
-and checks `http://127.0.0.1:7292/health`.
+and checks `http://127.0.0.1:7292/health`. The service listens on
+`http://0.0.0.0:7292` so Swagger can be reached from the LAN at
+`http://<server-ip>:7292/swagger`.
