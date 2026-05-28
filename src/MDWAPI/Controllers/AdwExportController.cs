@@ -1,4 +1,4 @@
-﻿using ClosedXML.Excel;
+using ClosedXML.Excel;
 using Dapper;
 using MDWAPI.Data;
 using Microsoft.AspNetCore.Authorization;
@@ -318,6 +318,211 @@ namespace MDWAPI.Controllers
             ms.Position = 0;
 
             var fileName = $"order-export-flowaccount_{channel}_{shopId}_{DateTime.UtcNow:yyyyMMddHHmmss}.xlsx";
+            return File(ms.ToArray(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                fileName);
+        }
+
+        /// <summary>
+        /// คืนข้อมูลทุกฟิลด์จาก adw.vw_OrderExportCashSaleFormatTH (แบ่งหน้า) สำหรับ FlowAccount (JSON)
+        /// </summary>
+        [HttpGet("flowaccount/cashsale")]
+        public async Task<IActionResult> GetFlowAccountCashSale(
+            [FromQuery] string? channel = null,
+            [FromQuery] long shopId = 0,
+            [FromQuery] DateTime? createdFrom = null,
+            [FromQuery] DateTime? createdTo = null,
+            [FromQuery] DateTime? updatedFrom = null,
+            [FromQuery] DateTime? updatedTo = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 500,
+            CancellationToken ct = default)
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 5000) pageSize = 500;
+
+            var conn = _db.Database.GetDbConnection();
+            if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
+
+            var where = new StringBuilder(@"
+            WHERE 1=1 ");
+
+            if (!string.IsNullOrWhiteSpace(channel))
+                where.Append(" AND channel = @channel");
+
+            if (shopId > 0)
+                where.Append(" AND shop_id = @shopId");
+
+            if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
+            if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
+            if (updatedFrom.HasValue) where.Append(" AND updated_at_th >= @updatedFrom");
+            if (updatedTo.HasValue) where.Append(" AND updated_at_th <  @updatedToPlus");
+
+            var sqlCount = $@"
+                            SELECT COUNT(1)
+                            FROM adw.vw_OrderExportCashSaleFormatTH
+                            {where};";
+
+            var sqlData = $@"
+                            SELECT *
+                            FROM adw.vw_OrderExportCashSaleFormatTH
+                            {where}
+                            ORDER BY created_at_th, [หมายเลขคำสั่งซื้อ/อ้างอิงจากเอกสาร], [จำนวน]
+                            OFFSET @offset ROWS FETCH NEXT @take ROWS ONLY;";
+
+            DateTime? createdToPlus = createdTo?.Date.AddDays(1);
+            DateTime? updatedToPlus = updatedTo?.Date.AddDays(1);
+
+            var pFilter = new
+            {
+                channel,
+                shopId,
+                createdFrom,
+                createdToPlus,
+                updatedFrom,
+                updatedToPlus
+            };
+
+            var totalRows = await conn.ExecuteScalarAsync<long>(sqlCount, pFilter);
+
+            var totalPages = totalRows == 0
+                ? 0
+                : (int)Math.Ceiling(totalRows / (double)pageSize);
+
+            var lastPage = totalPages;
+
+            var isOutOfRange = totalPages > 0 && page > lastPage;
+
+            var hasPrev = totalPages > 0 && page > 1 && page <= lastPage;
+            var hasNext = totalPages > 0 && page < lastPage;
+
+            if (isOutOfRange)
+            {
+                return Ok(new
+                {
+                    total = totalRows,
+                    page,
+                    pageSize,
+                    totalPages,
+                    lastPage,
+                    isOutOfRange,
+                    hasPrev,
+                    hasNext,
+                    items = Array.Empty<object>()
+                });
+            }
+
+            var pData = new
+            {
+                channel,
+                shopId,
+                createdFrom,
+                createdToPlus,
+                updatedFrom,
+                updatedToPlus,
+                offset = (page - 1) * pageSize,
+                take = pageSize
+            };
+
+            var items = (await conn.QueryAsync(sqlData, pData)).ToList();
+
+            return Ok(new
+            {
+                total = totalRows,
+                page,
+                pageSize,
+                totalPages,
+                lastPage,
+                isOutOfRange,
+                hasPrev,
+                hasNext,
+                items
+            });
+        }
+
+        /// <summary>
+        /// ดาวน์โหลด Excel (.xlsx) สำหรับ FlowAccount CashSale
+        /// จะ "ไม่" export 4 ฟิลด์ท้าย: channel, shop_id, updated_at_th, created_at_th
+        /// </summary>
+        [HttpGet("flowaccount/cashsale.xlsx")]
+        public async Task<IActionResult> DownloadFlowAccountCashSaleXlsx(
+            [FromQuery] string channel,
+            [FromQuery] long shopId,
+            [FromQuery] DateTime? createdFrom,
+            [FromQuery] DateTime? createdTo,
+            [FromQuery] DateTime? updatedFrom,
+            [FromQuery] DateTime? updatedTo,
+            CancellationToken ct = default)
+        {
+            var conn = _db.Database.GetDbConnection();
+            if (conn.State != ConnectionState.Open) await conn.OpenAsync(ct);
+
+            var where = new StringBuilder(@"
+            WHERE channel = @channel AND shop_id = @shopId");
+
+            if (createdFrom.HasValue) where.Append(" AND created_at_th >= @createdFrom");
+            if (createdTo.HasValue) where.Append(" AND created_at_th <  @createdToPlus");
+            if (updatedFrom.HasValue) where.Append(" AND updated_at_th >= @updatedFrom");
+            if (updatedTo.HasValue) where.Append(" AND updated_at_th <  @updatedToPlus");
+
+            var sql = $@"
+            SELECT *
+            FROM adw.vw_OrderExportCashSaleFormatTH
+            {where}
+            ORDER BY created_at_th, [หมายเลขคำสั่งซื้อ/อ้างอิงจากเอกสาร], [จำนวน];";
+
+            DateTime? createdToPlus = createdTo?.Date.AddDays(1);
+            DateTime? updatedToPlus = updatedTo?.Date.AddDays(1);
+
+            var rows = (await conn.QueryAsync(sql, new
+            {
+                channel,
+                shopId,
+                createdFrom,
+                createdToPlus,
+                updatedFrom,
+                updatedToPlus
+            })).ToList();
+
+            var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "channel", "shop_id", "updated_at_th", "created_at_th" };
+
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("CashSale");
+
+            if (rows.Count > 0)
+            {
+                var first = (IDictionary<string, object>)rows[0];
+                var headers = first.Keys.Where(k => !blocked.Contains(k)).ToList();
+
+                // Header
+                for (int c = 0; c < headers.Count; c++)
+                    ws.Cell(1, c + 1).SetValue(headers[c]);
+
+                // Data
+                int r = 2;
+                foreach (var row in rows)
+                {
+                    var dict = (IDictionary<string, object>)row;
+                    for (int c = 0; c < headers.Count; c++)
+                    {
+                        var key = headers[c];
+                        dict.TryGetValue(key, out var v);
+                        WriteCell(ws.Cell(r, c + 1), v);
+                    }
+                    r++;
+                }
+
+                ws.Columns().AdjustToContents();
+                ws.SheetView.FreezeRows(1);
+                ws.Row(1).Style.Font.SetBold();
+            }
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            ms.Position = 0;
+
+            var fileName = $"order-export-flowaccount-cashsale_{channel}_{shopId}_{DateTime.UtcNow:yyyyMMddHHmmss}.xlsx";
             return File(ms.ToArray(),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 fileName);
