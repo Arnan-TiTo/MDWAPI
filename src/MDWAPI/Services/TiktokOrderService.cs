@@ -565,7 +565,7 @@ namespace MDWAPI.Services
 
             const string channel = "tiktok";
             const string defaultEnv = "prod";
-            var path = $"/finance/202501/statements/{orderId}/statement_transactions";
+            var path = $"/finance/202501/orders/{orderId}/statement_transactions";
 
             var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
                 channel: channel,
@@ -609,9 +609,7 @@ namespace MDWAPI.Services
                 ["sign_method"] = "sha256",
                 ["timestamp"] = ts,
                 ["shop_cipher"] = shopCipher,
-                ["access_token"] = accessToken,
-                ["sort_field"] = "order_create_time",
-                ["sort_order"] = "ASC"
+                ["access_token"] = accessToken
             };
 
             q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
