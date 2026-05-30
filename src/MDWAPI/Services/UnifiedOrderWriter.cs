@@ -476,15 +476,15 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             ?? SumItemDecimals(income, "ams_commission_fee"));
         order.SellerVoucherCode = GetStringOrCsv(income, "seller_voucher_code");
 
-        var sellerDiscount = SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "seller_discount"))
-            ?? SumItemDecimals(income, "discount_from_voucher_seller")
-            ?? Abs(GetDecimal(buyerPayment, "seller_voucher"));
-        var shopeeDiscount = SumDecimals(GetDecimal(income, "voucher_from_shopee"), GetDecimal(income, "shopee_discount"), GetDecimal(income, "original_shopee_discount"))
-            ?? SumItemDecimals(income, "discount_from_voucher_shopee")
-            ?? Abs(GetDecimal(buyerPayment, "shopee_voucher"));
-        var voucherAmount = GetDecimal(income, "voucher_amount")
-            ?? SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "voucher_from_shopee"))
-            ?? SumDecimals(Abs(GetDecimal(buyerPayment, "seller_voucher")), Abs(GetDecimal(buyerPayment, "shopee_voucher")));
+        var sellerDiscount = Abs(GetDecimal(buyerPayment, "seller_voucher"))
+            ?? SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "seller_discount"))
+            ?? SumItemDecimals(income, "discount_from_voucher_seller");
+        var shopeeDiscount = Abs(GetDecimal(buyerPayment, "shopee_voucher"))
+            ?? SumDecimals(GetDecimal(income, "voucher_from_shopee"), GetDecimal(income, "shopee_discount"), GetDecimal(income, "original_shopee_discount"))
+            ?? SumItemDecimals(income, "discount_from_voucher_shopee");
+        var voucherAmount = SumDecimals(Abs(GetDecimal(buyerPayment, "seller_voucher")), Abs(GetDecimal(buyerPayment, "shopee_voucher")))
+            ?? GetDecimal(income, "voucher_amount")
+            ?? SumDecimals(GetDecimal(income, "voucher_from_seller"), GetDecimal(income, "voucher_from_shopee"));
 
         if (sellerDiscount.HasValue)
             order.DiscountSellerAmount = sellerDiscount;
