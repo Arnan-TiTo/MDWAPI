@@ -565,7 +565,7 @@ namespace MDWAPI.Services
 
             const string channel = "tiktok";
             const string defaultEnv = "prod";
-            var path = $"/finance/202309/orders/{orderId}/statement_transactions";
+            var path = $"/finance/202501/orders/{orderId}/statement_transactions";
 
             var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
                 channel: channel,

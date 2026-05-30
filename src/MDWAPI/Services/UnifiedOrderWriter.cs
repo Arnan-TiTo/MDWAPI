@@ -520,9 +520,13 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         JsonElement transactionsList = default;
         if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
         {
-            if (data.TryGetProperty("statement_transactions", out var list) && list.ValueKind == JsonValueKind.Array)
+            if (data.TryGetProperty("transactions", out var list) && list.ValueKind == JsonValueKind.Array)
             {
                 transactionsList = list;
+            }
+            else if (data.TryGetProperty("statement_transactions", out var oldList) && oldList.ValueKind == JsonValueKind.Array)
+            {
+                transactionsList = oldList;
             }
         }
 
@@ -538,31 +542,104 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         {
             decimal totalSettlement = 0;
             decimal totalBuyerShipping = 0;
+            decimal totalActualShipping = 0;
+            decimal totalShippingRebate = 0;
             decimal totalPlatformDiscount = 0;
-            decimal totalFee = 0;
+            decimal totalCommissionFee = 0;
+            decimal totalTransactionFee = 0;
+            decimal totalServiceFee = 0;
+            decimal totalPlatformFee = 0;
+            decimal totalSellerDiscount = 0;
             decimal totalRevenue = 0;
             decimal totalAfterSellerDiscountSubtotal = 0;
 
             foreach (var tx in transactionsList.EnumerateArray())
             {
                 totalSettlement += GetDecimal(tx, "settlement_amount") ?? 0;
-                totalBuyerShipping += GetDecimal(tx, "customer_shipping_fee_amount") ?? 0;
-                totalPlatformDiscount += GetDecimal(tx, "platform_discount_amount") ?? 0;
-                totalFee += GetDecimal(tx, "fee_amount") ?? 0;
                 totalRevenue += GetDecimal(tx, "revenue_amount") ?? 0;
                 totalAfterSellerDiscountSubtotal += GetDecimal(tx, "after_seller_discounts_subtotal_amount") ?? 0;
+
+                // 1. Shipping Cost Breakdown
+                if (tx.TryGetProperty("shipping_cost_breakdown", out var shipCost) && shipCost.ValueKind == JsonValueKind.Object)
+                {
+                    totalBuyerShipping += Abs(GetDecimal(shipCost, "customer_paid_shipping_fee_amount")) ?? 0;
+                    totalActualShipping += Abs(GetDecimal(shipCost, "actual_shipping_fee_amount")) ?? 0;
+
+                    var rebate = Abs(GetDecimal(shipCost, "shipping_fee_discount_amount"));
+                    if (!rebate.HasValue && shipCost.TryGetProperty("supplementary_component", out var supp) && supp.ValueKind == JsonValueKind.Object)
+                    {
+                        rebate = Abs(GetDecimal(supp, "platform_shipping_fee_discount_amount"));
+                    }
+                    totalShippingRebate += rebate ?? 0;
+                }
+                else
+                {
+                    totalBuyerShipping += Abs(GetDecimal(tx, "customer_shipping_fee_amount")) ?? 0;
+                    totalPlatformDiscount += Abs(GetDecimal(tx, "platform_discount_amount")) ?? 0;
+                }
+
+                // 2. Revenue Breakdown / Seller Discount
+                decimal? sellerDisc = null;
+                if (tx.TryGetProperty("revenue_breakdown", out var revBreakdown) && revBreakdown.ValueKind == JsonValueKind.Object)
+                {
+                    sellerDisc = Abs(GetDecimal(revBreakdown, "seller_discount_amount"));
+                }
+                totalSellerDiscount += sellerDisc ?? 0;
+
+                // 3. Fee & Tax Breakdown
+                decimal comm = 0;
+                decimal trans = 0;
+                decimal serv = 0;
+                decimal plat = 0;
+                decimal feeTax = Abs(GetDecimal(tx, "fee_tax_amount")) ?? 0;
+
+                if (tx.TryGetProperty("fee_tax_breakdown", out var feeTaxBreakdown) && feeTaxBreakdown.ValueKind == JsonValueKind.Object &&
+                    feeTaxBreakdown.TryGetProperty("fee", out var feeObj) && feeObj.ValueKind == JsonValueKind.Object)
+                {
+                    comm = Abs(GetDecimal(feeObj, "platform_commission_amount")) ?? 0;
+                    trans = Abs(GetDecimal(feeObj, "transaction_fee_amount")) ?? 0;
+                    serv = (Abs(GetDecimal(feeObj, "flash_sales_service_fee_amount")) ?? 0)
+                         + (Abs(GetDecimal(feeObj, "voucher_xtra_service_fee_amount")) ?? 0);
+
+                    if (feeTax > 0)
+                    {
+                        plat = Math.Max(0, feeTax - comm - trans - serv);
+                    }
+                    else
+                    {
+                        plat = Abs(GetDecimal(feeObj, "commerce_growth_fee_amount")) ?? 0;
+                    }
+                }
+                else
+                {
+                    plat = Abs(GetDecimal(tx, "fee_amount")) ?? 0;
+                }
+
+                totalCommissionFee += comm;
+                totalTransactionFee += trans;
+                totalServiceFee += serv;
+                totalPlatformFee += plat;
             }
 
             order.EscrowAmount = totalSettlement;
             order.BuyerPaidShippingFee = totalBuyerShipping;
-            order.PlatformFee = totalFee; // map total fee to PlatformFee
-            order.DiscountPlatformAmount = totalPlatformDiscount;
+            order.ActualShippingFee = totalActualShipping;
+            order.PlatformShippingRebate = totalShippingRebate;
+            order.CommissionFee = totalCommissionFee;
+            order.PaymentTransactionFee = totalTransactionFee;
+            order.ServiceFee = totalServiceFee;
+            order.PlatformFee = totalPlatformFee;
 
-            // If there's a difference between revenue and after_seller_discounts_subtotal, that is the seller discount
-            if (totalRevenue > totalAfterSellerDiscountSubtotal)
+            if (totalSellerDiscount > 0)
+            {
+                order.DiscountSellerAmount = totalSellerDiscount;
+            }
+            else if (totalRevenue > totalAfterSellerDiscountSubtotal)
             {
                 order.DiscountSellerAmount = totalRevenue - totalAfterSellerDiscountSubtotal;
             }
+
+            order.DiscountPlatformAmount = totalPlatformDiscount;
         }
 
         await _db.SaveChangesAsync(ct);

@@ -139,15 +139,41 @@ public class MarketplaceOrdersController : ControllerBase
                           "code": 0,
                           "message": "Success (Fallback Mocked due to missing scope 105005)",
                           "data": {
-                            "order_id": "{{orderSn}}",
-                            "statement_transactions": [
+                            "transactions": [
                               {
-                                "settlement_amount": {{settlement}},
-                                "customer_shipping_fee_amount": {{shipping}},
-                                "platform_discount_amount": {{platformDiscount}},
-                                "fee_amount": {{estimatedFee}},
-                                "revenue_amount": {{total}},
-                                "after_seller_discounts_subtotal_amount": {{total}}
+                                "id": "mock_tx_id",
+                                "statement_id": "mock_statement_id",
+                                "order_id": "{{orderSn}}",
+                                "currency": "THB",
+                                "type": "ORDER",
+                                "status": "SETTLED",
+                                "settlement_amount": "{{settlement}}",
+                                "revenue_amount": "{{total}}",
+                                "revenue_breakdown": {
+                                  "subtotal_before_discount_amount": "{{total}}",
+                                  "seller_discount_amount": "{{sellerDiscount}}",
+                                  "seller_discount_refund_amount": "0.00",
+                                  "refund_subtotal_before_discount_amount": "0.00"
+                                },
+                                "fee_tax_amount": "-{{estimatedFee}}",
+                                "fee_tax_breakdown": {
+                                  "fee": {
+                                    "transaction_fee_amount": "-{{estimatedFee}}",
+                                    "platform_commission_amount": "0.00",
+                                    "flash_sales_service_fee_amount": "0.00",
+                                    "voucher_xtra_service_fee_amount": "0.00",
+                                    "commerce_growth_fee_amount": "0.00"
+                                  }
+                                },
+                                "shipping_cost_breakdown": {
+                                  "actual_shipping_fee_amount": "0.00",
+                                  "shipping_fee_discount_amount": "0.00",
+                                  "customer_paid_shipping_fee_amount": "{{shipping}}",
+                                  "supplementary_component": {
+                                    "platform_shipping_fee_discount_amount": "0.00",
+                                    "shipping_fee_subsidy_amount": "0.00"
+                                  }
+                                }
                               }
                             ]
                           }
