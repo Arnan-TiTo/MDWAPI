@@ -468,6 +468,10 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
         order.BuyerPaidShippingFee = GetDecimal(income, "buyer_paid_shipping_fee");
         order.ActualShippingFee = GetDecimal(income, "actual_shipping_fee");
         order.PlatformShippingRebate = GetDecimal(income, "shopee_shipping_rebate");
+
+        var shippingFeeSst = GetDecimal(buyerPayment, "shipping_fee_sst_amount");
+        if (shippingFeeSst.HasValue)
+            order.ShippingFeeAmount = shippingFeeSst;
         order.CommissionFee = FeeAmount(GetDecimal(income, "commission_fee"));
         order.ServiceFee = FeeAmount(GetDecimal(income, "service_fee"));
         order.PlatformFee = FeeAmount(GetDecimalAnyNonZeroFirst(income, "platform_fee", "seller_platform_fee", "infrastructure_fee", "campaign_fee", "seller_order_processing_fee"));
