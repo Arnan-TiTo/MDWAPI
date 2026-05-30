@@ -609,7 +609,9 @@ namespace MDWAPI.Services
                 ["sign_method"] = "sha256",
                 ["timestamp"] = ts,
                 ["shop_cipher"] = shopCipher,
-                ["access_token"] = accessToken
+                ["access_token"] = accessToken,
+                ["sort_field"] = "order_create_time",
+                ["sort_order"] = "ASC"
             };
 
             q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
