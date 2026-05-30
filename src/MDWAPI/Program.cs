@@ -24,8 +24,8 @@ System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Inst
 // ===== DATABASE =====
 var conn = Environment.GetEnvironmentVariable("APP_DB")
  ?? builder.Configuration.GetConnectionString("DefaultConnection")
-//  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
- ?? "Server=10.2.20.104,1433;Database=VCINDW;User Id=sa;Password=Admin:9999;TrustServerCertificate=True;";
+ ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=Admin@9999;TrustServerCertificate=True;";
+//  ?? "Server=10.2.20.104,1433;Database=VCINDW;User Id=sa;Password=Admin:9999;TrustServerCertificate=True;";
 //  ?? "Server=10.10.14.103;Database=VCINDW;User Id=dev_Mdw;Password=SW!TKy9$d5i;TrustServerCertificate=True;";
 //  ?? "Server=localhost;Database=VCINDW;User Id=sa;Password=V&Cdocker;TrustServerCertificate=True;";
 
