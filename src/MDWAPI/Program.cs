@@ -189,6 +189,35 @@ builder.Services.AddHttpClient("OrdersApi", (sp, http) =>
     return handler;
 });
 
+builder.Services.AddHttpClient("IdwApi", (sp, http) =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var baseUrl = Environment.GetEnvironmentVariable("IDW_BASE_URL")
+                  ?? cfg.GetValue<string>("IdwApi:BaseUrl")
+                  ?? "http://172.16.13.11:5080";
+
+    http.BaseAddress = new Uri(baseUrl);
+    http.Timeout = TimeSpan.FromMinutes(5); // OCR processing can take time
+    http.DefaultRequestHeaders.Accept.Clear();
+    http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+})
+.ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    };
+
+#if DEBUG
+    handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+    {
+        RemoteCertificateValidationCallback = (msg, cert, chain, errors) => true
+    };
+#endif
+
+    return handler;
+});
+
 // Controllers + จูน JSON (optional)
 builder.Services.AddControllers()
     .AddJsonOptions(o =>

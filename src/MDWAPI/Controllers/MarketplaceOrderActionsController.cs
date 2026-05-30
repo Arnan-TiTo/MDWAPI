@@ -695,6 +695,166 @@ public class MarketplaceOrderActionsController : ControllerBase
         }
     }
 
+    [HttpPost("reload-label-byref")]
+    public async Task<IActionResult> ReloadLabelByRef(
+        [FromQuery] long shopId,
+        [FromQuery] long? timeFrom = null,
+        [FromQuery] long? timeTo = null,
+        CancellationToken ct = default)
+    {
+        // 1. ดึง order ที่เป็น Shopee และ OrderStatus == "PAID"
+        var q = _db.UnifiedOrders.AsNoTracking()
+            .Where(o => o.OrderStatus == "PAID"
+                     && o.Channel == "Shopee"
+                     && o.ShopId == shopId);
+
+        if (timeFrom.HasValue)
+        {
+            var from = DateTimeOffset.FromUnixTimeSeconds(timeFrom.Value).UtcDateTime;
+            q = q.Where(o => o.CreatedTimeUtc >= from);
+        }
+        if (timeTo.HasValue)
+        {
+            var to = DateTimeOffset.FromUnixTimeSeconds(timeTo.Value).UtcDateTime;
+            q = q.Where(o => o.CreatedTimeUtc <= to);
+        }
+
+        var pendingOrders = await q
+            .OrderBy(o => o.CreatedTimeUtc)
+            .Select(o => new { o.ExternalOrderNo, o.ShipmentProvider })
+            .ToListAsync(ct);
+
+        if (pendingOrders.Count == 0)
+        {
+            return Ok(new { message = "No PAID Shopee orders found for this shop.", processed = 0 });
+        }
+
+        _log.LogInformation("Batch reload-label-byref: found {Count} orders for shop {ShopId}", pendingOrders.Count, shopId);
+
+        // ดึง platformId ของ Shopee
+        var platformMisc = await _db.Misc.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Type == "Platform" && m.Value1 == "Shopee", ct);
+        int? platformId = platformMisc?.Id;
+
+        // ดึง internal DB Id ของ Shop สำหรับส่งไป IDW API
+        var shopRecord = await _db.Shops.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.ShopId == shopId, ct);
+        long idwShopId = shopRecord?.Id ?? shopId;
+
+        var client = _httpFactory.CreateClient("OrdersApi");
+        var idwClient = _httpFactory.CreateClient("IdwApi");
+
+        if (Request.Headers.TryGetValue("Authorization", out var auth))
+        {
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
+            idwClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", auth.ToString());
+        }
+
+        var results = new List<object>();
+        int reloadSuccess = 0, ocrSuccess = 0, failed = 0;
+
+        foreach (var po in pendingOrders)
+        {
+            var orderRef = po.ExternalOrderNo;
+            if (string.IsNullOrWhiteSpace(orderRef)) continue;
+
+            try
+            {
+                // Call /api/market/orders/actions/reload-label
+                var reloadUrl = $"/api/market/orders/actions/reload-label?platform=Shopee&shopId={shopId}&orderRef={Uri.EscapeDataString(orderRef)}";
+                using var reloadResp = await client.PostAsync(reloadUrl, new StringContent(""), ct);
+                
+                if (!reloadResp.IsSuccessStatusCode)
+                {
+                    var errorBody = await reloadResp.Content.ReadAsStringAsync(ct);
+                    results.Add(new { orderRef, reload = "Failed", reloadError = errorBody });
+                    failed++;
+                    continue;
+                }
+
+                reloadSuccess++;
+
+                // Query saved label from DB to get the path
+                var labelRecord = await _db.UnifiedOrderLabels.AsNoTracking()
+                    .Where(l => l.Channel == "Shopee" && l.ShopId == shopId && l.OrderExternalNo == orderRef)
+                    .OrderByDescending(l => l.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                if (labelRecord == null)
+                {
+                    results.Add(new { orderRef, reload = "Success", ocr = "Failed", reason = "Label record not found in DB after reload" });
+                    failed++;
+                    continue;
+                }
+
+                // Construct full path and read pdf bytes
+                var filePath = Path.Combine(_labelBasePath, labelRecord.Location, labelRecord.FileName);
+                if (!System.IO.File.Exists(filePath))
+                {
+                    results.Add(new { orderRef, reload = "Success", ocr = "Failed", reason = $"PDF file not found on disk at {filePath}" });
+                    failed++;
+                    continue;
+                }
+
+                var pdfBytes = await System.IO.File.ReadAllBytesAsync(filePath, ct);
+
+                // Find matching logistic ID
+                int? logisticId = null;
+                if (!string.IsNullOrWhiteSpace(po.ShipmentProvider))
+                {
+                    var miscLogistic = await _db.Misc.AsNoTracking()
+                        .FirstOrDefaultAsync(m => m.Type == "Logistic" && m.Value1 == po.ShipmentProvider, ct);
+                    logisticId = miscLogistic?.Id;
+                }
+
+                // Send to IDW API import endpoint (api/idw/import)
+                using var form = new MultipartFormDataContent();
+                var fileContent = new ByteArrayContent(pdfBytes);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+                form.Add(fileContent, "file", labelRecord.FileName);
+                
+                form.Add(new StringContent(idwShopId.ToString()), "shopId");
+                if (platformId.HasValue)
+                {
+                    form.Add(new StringContent(platformId.Value.ToString()), "miscIdPlatform");
+                }
+                if (logisticId.HasValue)
+                {
+                    form.Add(new StringContent(logisticId.Value.ToString()), "miscIdLogistic");
+                }
+                form.Add(new StringContent("typhoon"), "ocrEngine");
+
+                using var idwResp = await idwClient.PostAsync("/api/idw/import", form, ct);
+                var idwBody = await idwResp.Content.ReadAsStringAsync(ct);
+
+                if (idwResp.IsSuccessStatusCode)
+                {
+                    ocrSuccess++;
+                    results.Add(new { orderRef, reload = "Success", ocr = "Success", ocrResponse = TryParseJson(idwBody) });
+                }
+                else
+                {
+                    results.Add(new { orderRef, reload = "Success", ocr = "Failed", ocrError = idwBody });
+                    failed++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "reload-label-byref: error processing {OrderRef}", orderRef);
+                results.Add(new { orderRef, error = ex.Message });
+                failed++;
+            }
+        }
+        return Ok(new
+        {
+            totalOrders = pendingOrders.Count,
+            reloadSuccess,
+            ocrSuccess,
+            failed,
+            results
+        });
+    }
+
     // ====== 3) Cancel Order ======
 
     [HttpPost("cancel")]

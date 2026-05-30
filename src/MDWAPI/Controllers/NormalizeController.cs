@@ -669,6 +669,7 @@ public class NormalizeController : ControllerBase
 
         return false;
     }
+    
     private static bool HasExplicitError(JsonElement root)
     {
         // กรณี API ส่ง "error": "..." (แบบเดิม)
