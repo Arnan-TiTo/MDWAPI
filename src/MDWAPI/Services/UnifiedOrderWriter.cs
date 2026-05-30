@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using MDWAPI.Data;
 using MDWAPI.DTOs;
@@ -492,6 +492,74 @@ public class UnifiedOrderWriter : IUnifiedOrderWriter
             order.DiscountPlatformAmount = shopeeDiscount;
         if (voucherAmount.HasValue)
             order.VoucherAmount = voucherAmount;
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task UpsertTiktokEscrowAsync(string orderId, string escrowJson, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(orderId))
+            throw new ArgumentException("orderId is required", nameof(orderId));
+        if (string.IsNullOrWhiteSpace(escrowJson))
+            throw new ArgumentException("escrowJson is required", nameof(escrowJson));
+
+        using var doc = JsonDocument.Parse(escrowJson);
+        var root = doc.RootElement;
+
+        // Check response code if present
+        if (root.TryGetProperty("code", out var codeEl) && codeEl.ValueKind == JsonValueKind.Number && codeEl.GetInt32() != 0)
+        {
+            throw new InvalidOperationException($"TikTok API returned error code {codeEl.GetInt32()}");
+        }
+
+        // Locate statement_transactions list
+        JsonElement transactionsList = default;
+        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+        {
+            if (data.TryGetProperty("statement_transactions", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                transactionsList = list;
+            }
+        }
+
+        var order = await _db.UnifiedOrders
+            .FirstOrDefaultAsync(x => x.Channel == "TikTok" && x.ExternalOrderId == orderId, ct)
+            ?? await _db.UnifiedOrders
+            .FirstOrDefaultAsync(x => x.Channel == "TikTok" && x.ExternalOrderNo == orderId, ct)
+            ?? throw new InvalidOperationException($"TikTok order not found in UnifiedOrders: {orderId}");
+
+        order.PayloadEscrowJson = escrowJson;
+
+        if (transactionsList.ValueKind == JsonValueKind.Array && transactionsList.GetArrayLength() > 0)
+        {
+            decimal totalSettlement = 0;
+            decimal totalBuyerShipping = 0;
+            decimal totalPlatformDiscount = 0;
+            decimal totalFee = 0;
+            decimal totalRevenue = 0;
+            decimal totalAfterSellerDiscountSubtotal = 0;
+
+            foreach (var tx in transactionsList.EnumerateArray())
+            {
+                totalSettlement += GetDecimal(tx, "settlement_amount") ?? 0;
+                totalBuyerShipping += GetDecimal(tx, "customer_shipping_fee_amount") ?? 0;
+                totalPlatformDiscount += GetDecimal(tx, "platform_discount_amount") ?? 0;
+                totalFee += GetDecimal(tx, "fee_amount") ?? 0;
+                totalRevenue += GetDecimal(tx, "revenue_amount") ?? 0;
+                totalAfterSellerDiscountSubtotal += GetDecimal(tx, "after_seller_discounts_subtotal_amount") ?? 0;
+            }
+
+            order.EscrowAmount = totalSettlement;
+            order.BuyerPaidShippingFee = totalBuyerShipping;
+            order.PlatformFee = totalFee; // map total fee to PlatformFee
+            order.DiscountPlatformAmount = totalPlatformDiscount;
+
+            // If there's a difference between revenue and after_seller_discounts_subtotal, that is the seller discount
+            if (totalRevenue > totalAfterSellerDiscountSubtotal)
+            {
+                order.DiscountSellerAmount = totalRevenue - totalAfterSellerDiscountSubtotal;
+            }
+        }
 
         await _db.SaveChangesAsync(ct);
     }

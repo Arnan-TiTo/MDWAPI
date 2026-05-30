@@ -1,4 +1,4 @@
-﻿using MDWAPI.Data;
+using MDWAPI.Data;
 using MDWAPI.Entities;
 using MDWAPI.Models;
 using MDWAPI.Repos;
@@ -183,7 +183,7 @@ public class NormalizeController : ControllerBase
                 _ => throw new ArgumentException("Unsupported platform")
             };
 
-            var escrowResult = await TryFetchAndUpsertShopeeEscrowAsync(
+            var escrowResult = await TryFetchAndUpsertEscrowAsync(
                 platform,
                 shopId,
                 r.ExternalOrderId,
@@ -490,7 +490,7 @@ public class NormalizeController : ControllerBase
                         _ => throw new ArgumentException("Unsupported platform")
                     };
 
-                    var escrowResult = await TryFetchAndUpsertShopeeEscrowAsync(
+                    var escrowResult = await TryFetchAndUpsertEscrowAsync(
                         platform,
                         shopId,
                         r.ExternalOrderId,
@@ -567,20 +567,31 @@ public class NormalizeController : ControllerBase
     // ========================
     // Helpers
     // ========================
-    private async Task<string?> TryFetchAndUpsertShopeeEscrowAsync(
+    private async Task<string?> TryFetchAndUpsertEscrowAsync(
         string platform,
         long? shopId,
         string orderSn,
         HttpClient client,
         CancellationToken ct)
     {
-        if (!platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase))
+        bool isShopee = platform.Equals("Shopee", StringComparison.OrdinalIgnoreCase);
+        bool isTiktok = platform.Equals("TikTok", StringComparison.OrdinalIgnoreCase);
+
+        if (!isShopee && !isTiktok)
             return null;
 
         if (shopId is null)
             return "skipped: missing shopId";
 
-        var escrowUrl = $"/api/market/orders/escrow-detail?shopId={shopId.Value}&orderSn={Uri.EscapeDataString(orderSn)}";
+        string escrowUrl;
+        if (isShopee)
+        {
+            escrowUrl = $"/api/market/orders/escrow-detail?platform=Shopee&shopId={shopId.Value}&orderSn={Uri.EscapeDataString(orderSn)}";
+        }
+        else
+        {
+            escrowUrl = $"/api/market/orders/escrow-detail?platform=TikTok&shopId={shopId.Value}&orderSn={Uri.EscapeDataString(orderSn)}";
+        }
 
         try
         {
@@ -589,8 +600,8 @@ public class NormalizeController : ControllerBase
 
             if (!resp.IsSuccessStatusCode)
             {
-                _log.LogWarning("Shopee escrow fetch failed for {OrderSn}: {Status} {Body}",
-                    orderSn, (int)resp.StatusCode, json);
+                _log.LogWarning("{Platform} escrow fetch failed for {OrderSn}: {Status} {Body}",
+                    platform, orderSn, (int)resp.StatusCode, json);
                 return $"failed: HTTP {(int)resp.StatusCode}";
             }
 
@@ -598,17 +609,24 @@ public class NormalizeController : ControllerBase
             {
                 if (HasExplicitError(doc.RootElement))
                 {
-                    _log.LogWarning("Shopee escrow returned error payload for {OrderSn}: {Body}", orderSn, json);
+                    _log.LogWarning("{Platform} escrow returned error payload for {OrderSn}: {Body}", platform, orderSn, json);
                     return "failed: error payload";
                 }
             }
 
-            await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+            if (isShopee)
+            {
+                await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+            }
+            else
+            {
+                await _writer.UpsertTiktokEscrowAsync(orderSn, json, ct);
+            }
             return "synced";
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Shopee escrow sync failed for {OrderSn}", orderSn);
+            _log.LogWarning(ex, "{Platform} escrow sync failed for {OrderSn}", platform, orderSn);
             return $"failed: {ex.Message}";
         }
     }

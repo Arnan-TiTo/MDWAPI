@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -550,6 +550,84 @@ namespace MDWAPI.Services
 
             if (!resp.IsSuccessStatusCode)
                 throw new HttpRequestException($"TikTok cancel order failed: {(int)resp.StatusCode} | {text}");
+
+            return text;
+        }
+
+        public async Task<string> GetOrderEscrowRawAsync(
+            long shopId,
+            string orderId,
+            string? shopCipher,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(orderId))
+                throw new ArgumentException("orderId is required.", nameof(orderId));
+
+            const string channel = "tiktok";
+            const string defaultEnv = "prod";
+            var path = $"/finance/202309/orders/{orderId}/statement_transactions";
+
+            var (accessToken, env, _, appKey) = await _resolver.GetAccessTokenAsync(
+                channel: channel,
+                environment: defaultEnv,
+                partnerId: null,
+                appKey: null,
+                accountIdBig: null,
+                accountIdStr: shopId.ToString(),
+                ct: ct);
+
+            if (string.IsNullOrWhiteSpace(accessToken))
+                throw new InvalidOperationException("TikTok accessToken missing for this shop.");
+            if (string.IsNullOrWhiteSpace(appKey))
+                throw new InvalidOperationException("TikTok appKey missing for this shop.");
+
+            var appSecret = await _resolver.ResolveAppSecretAsync(
+                channel: channel,
+                environment: env,
+                partnersId: 0,
+                appKey: appKey!,
+                accountIdStr: shopId.ToString(),
+                ct: ct);
+
+            if (string.IsNullOrWhiteSpace(shopCipher))
+            {
+                shopCipher = await EnsureShopCipherAsync(
+                    shopId: shopId,
+                    env: env,
+                    appKey: appKey!,
+                    appSecret: appSecret,
+                    accessToken: accessToken,
+                    ct: ct);
+            }
+
+            var host = _resolver.HostFor(channel, env);
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+
+            var q = new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["app_key"] = appKey,
+                ["sign_method"] = "sha256",
+                ["timestamp"] = ts,
+                ["shop_cipher"] = shopCipher,
+                ["access_token"] = accessToken
+            };
+
+            q["sign"] = BuildSignDocSpec(appSecret, path, q, bodyUtf8: null);
+
+            var url = QueryHelpers.AddQueryString($"{host}{path}", q);
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("x-tts-access-token", accessToken);
+            req.Headers.Accept.ParseAdd("application/json");
+
+            _log.LogInformation("TikTok GET escrow {Url}", url);
+
+            using var http = _http.CreateClient("TikTok");
+            using var resp = await http.SendAsync(req, ct);
+            var text = await resp.Content.ReadAsStringAsync(ct);
+
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"TikTok {path} failed: {(int)resp.StatusCode} | {text}");
 
             return text;
         }

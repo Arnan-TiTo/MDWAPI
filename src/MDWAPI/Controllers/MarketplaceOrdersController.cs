@@ -1,4 +1,4 @@
-﻿using MDWAPI.Common;
+using MDWAPI.Common;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -81,30 +81,51 @@ public class MarketplaceOrdersController : ControllerBase
     }
 
     /// <summary>
-    /// GET /api/market/orders/escrow-detail?shopId=X&amp;orderSn=Y
-    /// ดึง income breakdown จาก Shopee escrow API (เฉพาะ order ที่ชำระแล้ว)
+    /// GET /api/market/orders/escrow-detail?platform=Shopee&amp;shopId=X&amp;orderSn=Y&amp;shopCipher=Z
+    /// ดึง income breakdown จาก Escrow API (เฉพาะ order ที่ชำระแล้ว)
     /// </summary>
     [HttpGet("escrow-detail")]
     public async Task<IActionResult> GetEscrowDetail(
+        [FromQuery] Platform platform,
         [FromQuery] long shopId,
         [FromQuery] string orderSn,
+        [FromQuery] string? shopCipher,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(orderSn))
             return BadRequest("orderSn is required");
 
-        var json = await _shopee.GetEscrowDetailRawAsync(shopId, orderSn, ct);
-
-        try
+        switch (platform)
         {
-            await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+            case Platform.Shopee:
+                {
+                    var json = await _shopee.GetEscrowDetailRawAsync(shopId, orderSn, ct);
+                    try
+                    {
+                        await _writer.UpsertShopeeEscrowAsync(orderSn, json, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Shopee escrow detail fetched but sync failed for {OrderSn}", orderSn);
+                    }
+                    return Content(json, "application/json");
+                }
+            case Platform.TikTok:
+                {
+                    var json = await _tiktok.GetOrderEscrowRawAsync(shopId, orderSn, shopCipher, ct);
+                    try
+                    {
+                        await _writer.UpsertTiktokEscrowAsync(orderSn, json, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "TikTok escrow detail fetched but sync failed for {OrderSn}", orderSn);
+                    }
+                    return Content(json, "application/json");
+                }
+            default:
+                return BadRequest("Unsupported platform");
         }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Shopee escrow detail fetched but sync failed for {OrderSn}", orderSn);
-        }
-
-        return Content(json, "application/json");
     }
 
     [HttpGet("returns/list")]

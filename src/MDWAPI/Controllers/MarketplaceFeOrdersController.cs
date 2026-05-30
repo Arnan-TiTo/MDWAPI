@@ -15,17 +15,20 @@ namespace MDWAPI.Controllers
         private readonly AppDbContext _db;
         private readonly ILogger<MarketplaceFeOrdersController> _log;
         private readonly ShopeeOrderService _shopee;
+        private readonly TiktokOrderService _tiktok;
         private readonly IUnifiedOrderWriter _writer;
 
         public MarketplaceFeOrdersController(
             AppDbContext db,
             ILogger<MarketplaceFeOrdersController> log,
             ShopeeOrderService shopee,
+            TiktokOrderService tiktok,
             IUnifiedOrderWriter writer)
         {
             _db = db;
             _log = log;
             _shopee = shopee;
+            _tiktok = tiktok;
             _writer = writer;
         }
 
@@ -238,6 +241,32 @@ namespace MDWAPI.Controllers
 
             var json = await _shopee.GetEscrowDetailRawAsync(order.ShopId.Value, order.ExternalOrderNo, ct);
             await _writer.UpsertShopeeEscrowAsync(order.ExternalOrderNo, json, ct);
+
+            var updated = await _db.VUnifiedOrders.AsNoTracking()
+                .Where(x => x.UnifiedOrderId == id)
+                .SingleAsync(ct);
+
+            return Ok(ToListItemDto(updated));
+        }
+
+        // POST /api/fe/orders/20014/sync-tiktok-escrow
+        [HttpPost("{id:long}/sync-tiktok-escrow")]
+        public async Task<ActionResult<UnifiedOrderListItemDto>> SyncTiktokEscrow(long id, CancellationToken ct)
+        {
+            var order = await _db.VUnifiedOrders.AsNoTracking()
+                .Where(x => x.UnifiedOrderId == id)
+                .SingleOrDefaultAsync(ct);
+
+            if (order is null) return NotFound();
+            if (!string.Equals(order.Channel, "TikTok", StringComparison.OrdinalIgnoreCase))
+                return BadRequest("sync-tiktok-escrow supports TikTok orders only.");
+            if (order.ShopId is null or <= 0)
+                return BadRequest("TikTok shopId is missing.");
+            if (string.IsNullOrWhiteSpace(order.ExternalOrderNo))
+                return BadRequest("TikTok order number is missing.");
+
+            var json = await _tiktok.GetOrderEscrowRawAsync(order.ShopId.Value, order.ExternalOrderNo, shopCipher: null, ct);
+            await _writer.UpsertTiktokEscrowAsync(order.ExternalOrderNo, json, ct);
 
             var updated = await _db.VUnifiedOrders.AsNoTracking()
                 .Where(x => x.UnifiedOrderId == id)

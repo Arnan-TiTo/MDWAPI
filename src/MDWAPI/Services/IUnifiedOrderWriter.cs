@@ -1,4 +1,4 @@
-﻿using MDWAPI.DTOs;
+using MDWAPI.DTOs;
 using MDWAPI.Models;
 
 namespace MDWAPI.Services;
@@ -12,4 +12,5 @@ public interface IUnifiedOrderWriter
     Task<NormalizeResult> UpsertFromTiktokRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct);
     Task<NormalizeResult> UpsertFromLazadaRawAsync(long? shopId, string? sellerId, string rawJson, string? batchNo, CancellationToken ct);
     Task UpsertShopeeEscrowAsync(string orderSn, string escrowJson, CancellationToken ct);
+    Task UpsertTiktokEscrowAsync(string orderId, string escrowJson, CancellationToken ct);
 }
