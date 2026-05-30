@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TT Member — Vibe and Chic</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        :root {
+            --vc-primary: #01313e;
+            --vc-gold: #d4b05d;
+            --vc-gold-dark: #b89a4d;
+            --vc-bg: #f7f7f5;
+            --vc-card: #ffffff;
+            --vc-border: #eee;
+            --vc-text: #333;
+            --vc-text-dim: #888;
+            --vc-success: #2CB67D;
+            --vc-danger: #e74c3c;
+            --vc-warning: #f39c12;
+            --vc-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Prompt', sans-serif;
+            background: var(--vc-bg);
+            color: var(--vc-text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .mb-app { max-width: 500px; margin: 0 auto; padding-bottom: 80px; }
+
+        /* Loading */
+        .mb-loading {
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            min-height: 80vh;
+        }
+        .mb-spinner {
+            width: 40px; height: 40px;
+            border: 3px solid var(--vc-border);
+            border-top-color: var(--vc-gold);
+            border-radius: 50%;
+            animation: mbSpin 0.8s linear infinite;
+        }
+        @keyframes mbSpin { to { transform: rotate(360deg); } }
+        .mb-loading p { margin-top: 12px; color: var(--vc-text-dim); font-size: 14px; }
+
+        /* Header */
+        .mb-header {
+            background: var(--vc-primary);
+            padding: 24px 20px 50px;
+            border-radius: 0 0 24px 24px;
+        }
+        .mb-profile-section { display: flex; align-items: center; gap: 14px; }
+        .mb-profile-pic {
+            width: 56px; height: 56px; border-radius: 50%;
+            border: 3px solid var(--vc-gold); object-fit: cover;
+        }
+        .mb-profile-pic-placeholder {
+            width: 56px; height: 56px; border-radius: 50%;
+            background: rgba(212,176,93,0.2);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; color: var(--vc-gold);
+        }
+        .mb-profile-info h2 { font-size: 18px; font-weight: 600; color: #fff; margin: 0; }
+        .mb-profile-info p { font-size: 12px; color: rgba(255,255,255,0.7); margin: 2px 0; }
+        .mb-member-badge {
+            display: inline-block; padding: 2px 10px;
+            background: var(--vc-gold); color: var(--vc-primary);
+            border-radius: 12px; font-size: 11px; font-weight: 600;
+        }
+
+        /* Points Card */
+        .mb-points-card {
+            margin: -30px 16px 16px;
+            background: var(--vc-card); border-radius: 16px; padding: 24px;
+            position: relative; z-index: 2;
+            box-shadow: var(--vc-shadow); border: 1px solid var(--vc-border);
+        }
+        .mb-points-label { font-size: 13px; color: var(--vc-text-dim); margin-bottom: 4px; }
+        .mb-points-value { font-size: 42px; font-weight: 700; color: var(--vc-gold); line-height: 1.1; }
+        .mb-points-unit { font-size: 16px; color: var(--vc-text-dim); margin-left: 4px; }
+        .mb-points-stats {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 8px; margin-top: 16px; padding-top: 16px;
+            border-top: 1px solid var(--vc-border);
+        }
+        .mb-stat-item { text-align: center; }
+        .mb-stat-item .val { font-size: 16px; font-weight: 600; color: var(--vc-primary); }
+        .mb-stat-item .lbl { font-size: 11px; color: var(--vc-text-dim); }
+
+        /* Tabs */
+        .mb-tabs { display: flex; gap: 4px; padding: 0 16px; margin-bottom: 16px; }
+        .mb-tab-btn {
+            flex: 1; padding: 10px 0;
+            background: var(--vc-card); border: 1px solid var(--vc-border);
+            border-radius: 10px; color: var(--vc-text-dim); font-size: 13px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .mb-tab-btn.active {
+            background: var(--vc-gold); color: #fff;
+            border-color: var(--vc-gold);
+            box-shadow: 0 4px 12px rgba(212,176,93,0.3);
+        }
+
+        /* Content */
+        .mb-tab-content { display: none; padding: 0 16px 80px; }
+        .mb-tab-content.active { display: block; animation: mbFadeUp 0.3s ease; }
+        @keyframes mbFadeUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* History */
+        .mb-history-item {
+            display: flex; align-items: center; gap: 12px;
+            background: var(--vc-card); border-radius: 12px; padding: 14px;
+            margin-bottom: 8px; border: 1px solid var(--vc-border);
+        }
+        .mb-history-icon {
+            width: 40px; height: 40px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; flex-shrink: 0;
+        }
+        .mb-history-icon.earn { background: rgba(44,182,125,0.12); }
+        .mb-history-icon.burn { background: rgba(231,76,60,0.1); }
+        .mb-history-icon.adjust { background: rgba(212,176,93,0.15); }
+        .mb-history-info { flex: 1; }
+        .mb-history-info .type { font-size: 13px; font-weight: 500; color: var(--vc-text); }
+        .mb-history-info .date { font-size: 11px; color: var(--vc-text-dim); }
+        .mb-history-points { font-size: 16px; font-weight: 600; text-align: right; }
+        .mb-history-points.positive { color: var(--vc-success); }
+        .mb-history-points.negative { color: var(--vc-danger); }
+
+        /* Rewards */
+        .mb-reward-card {
+            background: var(--vc-card); border-radius: 14px; overflow: hidden;
+            margin-bottom: 12px; border: 1px solid var(--vc-border); transition: transform 0.2s;
+        }
+        .mb-reward-card:active { transform: scale(0.98); }
+        .mb-reward-img {
+            width: 100%; height: 120px;
+            background: linear-gradient(135deg, var(--vc-primary) 0%, var(--vc-gold) 100%);
+            display: flex; align-items: center; justify-content: center; font-size: 48px;
+        }
+        .mb-reward-body { padding: 14px; }
+        .mb-reward-body h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: var(--vc-primary); }
+        .mb-reward-body .desc { font-size: 12px; color: var(--vc-text-dim); margin-bottom: 10px; }
+        .mb-reward-footer { display: flex; align-items: center; justify-content: space-between; }
+        .mb-reward-cost { font-size: 14px; font-weight: 600; color: var(--vc-gold-dark); }
+        .mb-reward-stock { font-size: 11px; color: var(--vc-text-dim); }
+        .mb-btn-redeem {
+            padding: 8px 20px; background: var(--vc-gold); border: none; border-radius: 8px;
+            color: #fff; font-size: 13px; font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .mb-btn-redeem:hover { background: var(--vc-gold-dark); }
+        .mb-btn-redeem:active { transform: scale(0.95); }
+        .mb-btn-redeem:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Account */
+        .mb-account-item {
+            display: flex; align-items: center; gap: 12px;
+            background: var(--vc-card); border-radius: 12px; padding: 14px;
+            margin-bottom: 8px; border: 1px solid var(--vc-border);
+        }
+        .mb-account-icon {
+            width: 40px; height: 40px; border-radius: 10px;
+            background: rgba(212,176,93,0.12);
+            display: flex; align-items: center; justify-content: center; font-size: 18px;
+        }
+        .mb-account-info { flex: 1; }
+        .mb-account-info .label { font-size: 12px; color: var(--vc-text-dim); }
+        .mb-account-info .value { font-size: 14px; font-weight: 500; color: var(--vc-text); }
+
+        .mb-empty-state { text-align: center; padding: 40px 20px; color: var(--vc-text-dim); }
+        .mb-empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+        .mb-empty-state p { font-size: 14px; }
+
+        /* Modal */
+        .mb-modal-overlay {
+            position: fixed; inset: 0; z-index: 10000;
+            background: rgba(0,0,0,0.5);
+            display: none; align-items: flex-end; justify-content: center;
+        }
+        .mb-modal-overlay.show { display: flex; }
+        .mb-modal-content {
+            background: var(--vc-card); border-radius: 20px 20px 0 0;
+            padding: 24px; width: 100%; max-width: 500px;
+            animation: mbSlideUp 0.3s ease;
+        }
+        @keyframes mbSlideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .mb-modal-content h3 { font-size: 18px; margin-bottom: 16px; text-align: center; color: var(--vc-primary); }
+        .mb-modal-result { text-align: center; padding: 20px 0; }
+        .mb-modal-result .icon { font-size: 56px; margin-bottom: 12px; }
+        .mb-modal-result .msg { font-size: 15px; color: var(--vc-text-dim); margin-top: 8px; }
+        .mb-modal-result .code {
+            display: inline-block; padding: 14px 28px; margin-top: 12px;
+            background: rgba(212,176,93,0.08);
+            border: 2px dashed var(--vc-gold);
+            border-radius: 12px; font-size: 22px; font-weight: 700;
+            letter-spacing: 3px; color: var(--vc-gold-dark);
+        }
+        .mb-code-hint { font-size: 12px; color: var(--vc-text-dim); margin-top: 8px; }
+        .mb-btn-copy {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 20px; margin-top: 12px;
+            background: var(--vc-gold); border: none; border-radius: 8px;
+            color: #fff; font-size: 14px; font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .mb-btn-copy:active { transform: scale(0.95); }
+        .mb-btn-copy.copied { background: var(--vc-success); }
+        .mb-btn-close-modal {
+            width: 100%; padding: 14px;
+            background: var(--vc-bg); border: 1px solid var(--vc-border); border-radius: 12px;
+            color: var(--vc-text); font-size: 15px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; margin-top: 16px;
+        }
+
+        /* Edit Forms */
+        .mb-btn-edit {
+            display: flex; align-items: center; gap: 6px;
+            width: 100%; padding: 14px;
+            background: var(--vc-gold); border: none; border-radius: 10px;
+            color: #fff; font-size: 14px; font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; margin-top: 12px; justify-content: center; transition: all 0.2s;
+        }
+        .mb-btn-edit:hover { background: var(--vc-gold-dark); }
+        .mb-edit-form {
+            background: var(--vc-card); border-radius: 14px; padding: 20px;
+            margin-top: 12px; border: 1px solid var(--vc-border);
+            display: none; box-shadow: var(--vc-shadow);
+        }
+        .mb-edit-form.show { display: block; animation: mbFadeUp 0.3s ease; }
+        .mb-edit-form h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--vc-primary); }
+        .mb-form-group { margin-bottom: 14px; }
+        .mb-form-group label { display: block; font-size: 12px; color: var(--vc-text-dim); margin-bottom: 4px; }
+        .mb-form-group input, .mb-form-group select {
+            width: 100%; padding: 12px 14px;
+            background: var(--vc-bg); border: 1px solid var(--vc-border);
+            border-radius: 8px; color: var(--vc-text);
+            font-size: 14px; font-family: 'Prompt', sans-serif; outline: none;
+        }
+        .mb-form-group input:focus, .mb-form-group select:focus { border-color: var(--vc-gold); }
+        .mb-form-actions { display: flex; gap: 8px; }
+        .mb-btn-save {
+            flex: 1; padding: 12px;
+            background: var(--vc-gold); border: none; border-radius: 8px;
+            color: #fff; font-size: 14px; font-family: 'Prompt', sans-serif; font-weight: 500; cursor: pointer;
+        }
+        .mb-btn-save:hover { background: var(--vc-gold-dark); }
+        .mb-btn-cancel {
+            padding: 12px 20px;
+            background: var(--vc-bg); border: 1px solid var(--vc-border);
+            border-radius: 8px; color: var(--vc-text-dim);
+            font-size: 14px; font-family: 'Prompt', sans-serif; cursor: pointer;
+        }
+        .mb-form-msg { font-size: 13px; margin-top: 10px; padding: 8px; border-radius: 8px; }
+        .mb-form-msg.success { background: rgba(44,182,125,0.1); color: var(--vc-success); }
+        .mb-form-msg.error { background: rgba(231,76,60,0.1); color: var(--vc-danger); }
+        /* My Codes */
+        .mb-code-card {
+            background: var(--vc-card); border-radius: 14px; overflow: hidden;
+            margin-bottom: 12px; border: 1px solid var(--vc-border);
+        }
+        .mb-code-card-header {
+            display: flex; align-items: center; gap: 10px; padding: 14px;
+            border-bottom: 1px dashed var(--vc-border);
+        }
+        .mb-code-card-header .emoji { font-size: 28px; }
+        .mb-code-card-header .info { flex: 1; }
+        .mb-code-card-header .info h4 { font-size: 14px; font-weight: 600; color: var(--vc-primary); margin: 0; }
+        .mb-code-card-header .info .meta { font-size: 11px; color: var(--vc-text-dim); }
+        .mb-code-card-body { padding: 14px; text-align: center; }
+        .mb-code-card-body .code-value {
+            display: inline-block; padding: 10px 20px;
+            background: rgba(212,176,93,0.08); border: 2px dashed var(--vc-gold);
+            border-radius: 10px; font-size: 18px; font-weight: 700;
+            letter-spacing: 2px; color: var(--vc-gold-dark);
+            cursor: pointer; transition: all 0.2s;
+        }
+        .mb-code-card-body .code-value:active { transform: scale(0.95); }
+        .mb-code-card-body .code-hint { font-size: 11px; color: var(--vc-text-dim); margin-top: 6px; }
+        .mb-code-card-body .code-status {
+            display: inline-block; padding: 2px 8px; border-radius: 8px;
+            font-size: 11px; font-weight: 500; margin-top: 6px;
+        }
+        .mb-code-card-body .code-status.completed { background: rgba(44,182,125,0.1); color: var(--vc-success); }
+        .mb-code-card-body .code-status.cancelled { background: rgba(231,76,60,0.1); color: var(--vc-danger); }
+        .mb-code-card-body .code-status.reserved { background: rgba(243,156,18,0.1); color: var(--vc-warning); }
+    </style>
+</head>
+<body>
+    <div class="mb-app">
+        <!-- Loading -->
+        <div class="mb-loading" id="mbLoadingScreen">
+            <div class="mb-spinner"></div>
+            <p>กำลังเข้าสู่ระบบ...</p>
+        </div>
+
+        <!-- App -->
+        <div id="mbApp" style="display:none;">
+            <div class="mb-header">
+                <div class="mb-profile-section">
+                    <img id="mbProfilePic" class="mb-profile-pic" src="" alt="" style="display:none">
+                    <div class="mb-profile-pic-placeholder" id="mbProfilePlaceholder">👤</div>
+                    <div class="mb-profile-info">
+                        <h2 id="mbDisplayName">-</h2>
+                        <p id="mbMemberCode">-</p>
+                        <span class="mb-member-badge" id="mbMemberStatus">Active</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-points-card">
+                <div class="mb-points-label">แต้มสะสมคงเหลือ</div>
+                <div>
+                    <span class="mb-points-value" id="mbAvailablePoints">0</span>
+                    <span class="mb-points-unit">แต้ม</span>
+                </div>
+                <div class="mb-points-stats">
+                    <div class="mb-stat-item"><div class="val" id="mbTotalEarned">0</div><div class="lbl">สะสมทั้งหมด</div></div>
+                    <div class="mb-stat-item"><div class="val" id="mbTotalBurned">0</div><div class="lbl">ใช้ไปแล้ว</div></div>
+                    <div class="mb-stat-item"><div class="val" id="mbReservedPoints">0</div><div class="lbl">จองอยู่</div></div>
+                </div>
+                <div id="mbExpiryWarning" style="display:none; margin-top:12px; padding:10px 14px; background:rgba(243,156,18,0.08); border:1px solid rgba(243,156,18,0.2); border-radius:10px; font-size:13px; color:#e67e22;">
+                    ⏰ <span id="mbExpiringPoints">0</span> แต้มจะหมดอายุ <span id="mbNextExpiryDate"></span>
+                </div>
+            </div>
+
+            <div class="mb-tabs">
+                <button class="mb-tab-btn active" onclick="mbShowTab('history')">📋 ประวัติ</button>
+                <button class="mb-tab-btn" onclick="mbShowTab('codes')">🏷️ โค้ด</button>
+                <button class="mb-tab-btn" onclick="mbShowTab('rewards')">🎁 แลกรางวัล</button>
+                <button class="mb-tab-btn" onclick="mbShowTab('account')">👤 บัญชี</button>
+            </div>
+
+            <div class="mb-tab-content active" id="mb-tab-history"><div id="mbHistoryList"></div></div>
+            <div class="mb-tab-content" id="mb-tab-codes"><div id="mbCodesList"></div></div>
+            <div class="mb-tab-content" id="mb-tab-rewards"><div id="mbRewardList"></div></div>
+            <div class="mb-tab-content" id="mb-tab-account">
+                <div id="mbAccountInfo"></div>
+                <div class="mb-edit-form" id="mbEditForm">
+                    <h3>✏️ แก้ไขข้อมูลส่วนตัว</h3>
+                    <div class="mb-form-group"><label>ชื่อที่แสดง</label><input type="text" id="mbEditDisplayName" placeholder="กรอกชื่อ"></div>
+                    <div class="mb-form-group"><label>เบอร์โทรศัพท์</label><input type="tel" id="mbEditPhone" placeholder="0812345678" maxlength="10"></div>
+                    <div class="mb-form-group"><label>อีเมล</label><input type="email" id="mbEditEmail" placeholder="email@example.com"></div>
+                    <div class="mb-form-actions">
+                        <button class="mb-btn-save" id="mbBtnSave" onclick="mbSaveProfile()">💾 บันทึก</button>
+                        <button class="mb-btn-cancel" onclick="mbToggleEdit(false)">ยกเลิก</button>
+                    </div>
+                    <div class="mb-form-msg" id="mbEditMsg" style="display:none;"></div>
+                </div>
+                <button class="mb-btn-edit" id="mbBtnEdit" onclick="mbToggleEdit(true)">✏️ แก้ไขข้อมูลส่วนตัว</button>
+
+                <h3 style="margin:20px 0 10px;font-size:15px;color:var(--vc-primary);">🛒 แพลตฟอร์มที่ผูก</h3>
+                <div id="mbPlatformList"></div>
+                <div class="mb-edit-form" id="mbPlatformForm">
+                    <h3>🔗 ผูกบัญชีแพลตฟอร์มใหม่</h3>
+                    <div class="mb-form-group"><label>แพลตฟอร์ม</label>
+                        <select id="mbLinkPlatformType">
+                            <option value="">-- เลือกแพลตฟอร์ม --</option>
+                            <option value="SHOPEE">🟠 Shopee</option>
+                            <option value="LAZADA">🔵 Lazada</option>
+                            <option value="TIKTOK">⚫ TikTok Shop</option>
+                        </select>
+                    </div>
+                    <div class="mb-form-group"><label>ชื่อบัญชี / Username</label><input type="text" id="mbLinkAccountKey" placeholder="เช่น buyer_username"></div>
+                    <div class="mb-form-group"><label>ชื่อที่แสดงบนแพลตฟอร์ม (ไม่บังคับ)</label><input type="text" id="mbLinkAccountName" placeholder="เช่น ร้าน ABC"></div>
+                    <div class="mb-form-actions">
+                        <button class="mb-btn-save" id="mbBtnLinkSave" onclick="mbSubmitPlatformLink()">📤 ส่งคำขอ</button>
+                        <button class="mb-btn-cancel" onclick="mbTogglePlatformForm(false)">ยกเลิก</button>
+                    </div>
+                    <div class="mb-form-msg" id="mbLinkMsg" style="display:none;"></div>
+                </div>
+                <button class="mb-btn-edit" id="mbBtnAddPlatform" onclick="mbTogglePlatformForm(true)" style="background:var(--vc-primary);">🔗 ผูกบัญชีแพลตฟอร์มใหม่</button>
+                <div id="mbPlatformRequests" style="margin-top:12px;"></div>
+            </div>
+        </div>
+
+        <!-- Redeem Modal -->
+        <div class="mb-modal-overlay" id="mbRedeemModal">
+            <div class="mb-modal-content">
+                <h3 id="mbModalTitle">แลกของรางวัล</h3>
+                <div class="mb-modal-result" id="mbModalBody"></div>
+                <button class="mb-btn-close-modal" onclick="mbCloseModal()">ปิด</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    let MB_LIFF_ID = null;  // loaded dynamically from /api/line/config
+    const MB_API_BASE = '';  // same origin — served from MDWAPI
+
+    let mbCurrentMember = null;
+    let mbLineAccessToken = null;
+
+    function mbToCamel(obj) {
+        if (Array.isArray(obj)) return obj.map(mbToCamel);
+        if (obj !== null && typeof obj === 'object') {
+            return Object.keys(obj).reduce((result, key) => {
+                const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
+                result[camelKey] = mbToCamel(obj[key]);
+                return result;
+            }, {});
+        }
+        return obj;
+    }
+
+    async function mbApiFetch(url, options) {
+        const resp = await fetch(url, options);
+        const data = await resp.json();
+        return { ok: resp.ok, data: mbToCamel(data) };
+    }
+
+    async function mbInit() {
+        try {
+            // DEV: ?code=MBW-000002 bypasses LIFF login on localhost
+            const urlParams = new URLSearchParams(location.search);
+            const devCode = urlParams.get('code');
+            const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+            if (devCode && isLocal) {
+                console.log('[DEV] Loading member by code:', devCode);
+                const resp = await fetch(`${MB_API_BASE}/api/admin/member/search?q=${encodeURIComponent(devCode)}&page=1&pageSize=10`);
+                if (resp.ok) {
+                    const members = mbToCamel(await resp.json());
+                    const target = members.find(m => m.memberCode === devCode) || members[0];
+                    if (target) {
+                        const memberResp = await fetch(`${MB_API_BASE}/api/member/${target.memberId}`);
+                        if (memberResp.ok) {
+                            mbCurrentMember = mbToCamel(await memberResp.json());
+                        }
+                    }
+                }
+                if (!mbCurrentMember) throw new Error('Member not found: ' + devCode);
+            } else {
+                // Load LIFF ID from API
+                if (!MB_LIFF_ID) {
+                    try {
+                        const cfgResp = await fetch(`${MB_API_BASE}/api/line/config`);
+                        const cfg = await cfgResp.json();
+                        MB_LIFF_ID = cfg.liffId;
+                        console.log('[LIFF] Loaded LIFF ID:', MB_LIFF_ID);
+                    } catch (e) {
+                        console.error('[LIFF] Failed to load config', e);
+                    }
+                }
+                if (!MB_LIFF_ID) { document.body.innerHTML = '<p style="padding:20px;text-align:center">ไม่พบ LIFF Config กรุณาตั้งค่า LINE OA ก่อน</p>'; return; }
+
+                // PRODUCTION — normal LIFF flow
+                try {
+                    await liff.init({ liffId: MB_LIFF_ID });
+                } catch (liffErr) {
+                    const errMsg = (liffErr?.message || String(liffErr)).toLowerCase();
+                    if (errMsg.includes('code_verifier') || errMsg.includes('pkce') || errMsg.includes('invalid_grant')) {
+                        console.warn('LIFF PKCE error — clearing cache and re-login', liffErr);
+                        Object.keys(localStorage).forEach(k => {
+                            if (k.startsWith('LIFF_STORE:')) localStorage.removeItem(k);
+                        });
+                        Object.keys(sessionStorage).forEach(k => {
+                            if (k.startsWith('LIFF_STORE:')) sessionStorage.removeItem(k);
+                        });
+                        try { await liff.init({ liffId: MB_LIFF_ID }); } catch (e2) { console.warn('Re-init failed', e2); }
+                        liff.login();
+                        return;
+                    }
+                    throw liffErr;
+                }
+
+                if (!liff.isLoggedIn()) { liff.login(); return; }
+
+                mbLineAccessToken = liff.getAccessToken();
+                const { ok, data } = await mbApiFetch(`${MB_API_BASE}/api/line/auth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accessToken: mbLineAccessToken, liffId: MB_LIFF_ID })
+                });
+                if (!ok) throw new Error('Auth failed');
+                mbCurrentMember = data.member;
+            }
+
+            mbRenderProfile();
+            await Promise.all([mbLoadHistory(), mbLoadRewards(), mbLoadMyCodes()]);
+            mbRenderAccount();
+            mbRenderPlatformList();
+            await mbLoadPlatformRequests();
+
+            document.getElementById('mbApp').style.display = 'block';
+            document.getElementById('mbLoadingScreen').style.display = 'none';
+        } catch (err) {
+            console.error('Init error:', err);
+            const errMsg = (err?.message || String(err)).toLowerCase();
+            if (errMsg.includes('code_verifier') || errMsg.includes('pkce')) {
+                document.querySelector('#mbLoadingScreen p').innerHTML =
+                    'เกิดข้อผิดพลาดในการเข้าสู่ระบบ<br>' +
+                    '<button onclick="location.reload()" style="margin-top:12px;padding:8px 24px;' +
+                    'border:none;border-radius:8px;background:#06c755;color:#fff;font-size:16px;cursor:pointer">' +
+                    '🔄 ลองใหม่</button>';
+            } else {
+                document.querySelector('#mbLoadingScreen p').textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+            }
+        }
+    }
+
+    function mbRenderProfile() {
+        const m = mbCurrentMember;
+        document.getElementById('mbDisplayName').textContent = m.displayName || 'สมาชิก';
+        document.getElementById('mbMemberCode').textContent = m.memberCode;
+        document.getElementById('mbMemberStatus').textContent = m.status;
+        const pic = m.identities?.find(i => i.pictureUrl)?.pictureUrl;
+        if (pic) {
+            const img = document.getElementById('mbProfilePic');
+            img.src = pic; img.style.display = 'block';
+            document.getElementById('mbProfilePlaceholder').style.display = 'none';
+        }
+        const pb = m.pointBalance || {};
+        document.getElementById('mbAvailablePoints').textContent = (pb.availablePoints || 0).toLocaleString();
+        document.getElementById('mbTotalEarned').textContent = (pb.totalEarned || 0).toLocaleString();
+        document.getElementById('mbTotalBurned').textContent = (pb.totalBurned || 0).toLocaleString();
+        document.getElementById('mbReservedPoints').textContent = (pb.reservedPoints || 0).toLocaleString();
+
+        // Expiry warning
+        if (pb.expiringPoints && pb.expiringPoints > 0) {
+            document.getElementById('mbExpiryWarning').style.display = 'block';
+            document.getElementById('mbExpiringPoints').textContent = pb.expiringPoints.toLocaleString();
+            if (pb.nextExpiryDate) {
+                const d = new Date(pb.nextExpiryDate);
+                const days = Math.max(0, Math.ceil((d - new Date()) / 86400000));
+                document.getElementById('mbNextExpiryDate').textContent = days > 0
+                    ? `ภายใน ${days} วัน` : 'วันนี้!';
+            }
+        } else {
+            document.getElementById('mbExpiryWarning').style.display = 'none';
+        }
+    }
+
+    async function mbLoadHistory() {
+        try {
+            const { data: items } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/points/history`);
+            const container = document.getElementById('mbHistoryList');
+            if (!items.length) { container.innerHTML = `<div class="mb-empty-state"><div class="icon">📋</div><p>ยังไม่มีประวัติ</p></div>`; return; }
+            container.innerHTML = items.filter(i => i.txnType !== 'EXPIRE_WARN').map(item => {
+                const isPositive = item.points > 0;
+                const iconClass = item.txnType === 'EARN' ? 'earn' : item.txnType === 'ADJUST' ? 'adjust' : 'burn';
+                const emoji = { 'EARN':'✨', 'BURN':'🎁', 'ADJUST':'🔧', 'EXPIRE':'⌛', 'EARN_REVERSAL':'↩️' }[item.txnType] || '📦';
+                const typeName = { 'EARN':'ได้รับแต้ม', 'BURN':'แลกของรางวัล', 'RESERVE':'จองแต้ม', 'RELEASE':'คืนแต้ม', 'ADJUST':'ปรับแต้ม', 'EXPIRE':'แต้มหมดอายุ', 'EARN_REVERSAL':'หักแต้มคืน (Return)' }[item.txnType] || item.txnType;
+                return `<div class="mb-history-item"><div class="mb-history-icon ${iconClass}">${emoji}</div><div class="mb-history-info"><div class="type">${typeName}</div><div class="date">${mbFormatDate(item.occurredAt)}</div></div><div class="mb-history-points ${isPositive ? 'positive' : 'negative'}">${isPositive ? '+' : ''}${item.points.toLocaleString()}</div></div>`;
+            }).join('');
+        } catch (err) { console.error('Load history error:', err); }
+    }
+
+    // ── My Codes (Redemption History) ──
+    async function mbLoadMyCodes() {
+        try {
+            const { data: items } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/redemptions`);
+            const container = document.getElementById('mbCodesList');
+            if (!items.length) {
+                container.innerHTML = `<div class="mb-empty-state"><div class="icon">🏷️</div><p>ยังไม่มีโค้ดที่แลก<br>ไปแลกรางวัลกันเลย!</p></div>`;
+                return;
+            }
+            container.innerHTML = items.map(item => {
+                const pEmoji = { 'SHOPEE': '🟠', 'LAZADA': '🔵', 'TIKTOK': '⚫' }[(item.platformType || '').toUpperCase()] || '🎁';
+                const tEmoji = { 'DISCOUNT_CODE': '🏷️', 'FREE_SHIPPING': '🚚', 'GIFT': '🎁', 'COUPON': '🎟️' }[item.rewardType] || '🎁';
+                const statusClass = item.status.toLowerCase();
+                const statusText = { 'Completed': '✅ ใช้งานได้', 'Cancelled': '❌ ยกเลิก', 'Reserved': '⏳ รอดำเนินการ', 'Failed': '❌ ล้มเหลว' }[item.status] || item.status;
+                const codeHtml = item.code
+                    ? `<div class="code-value" onclick="mbCopyCode('${item.code}')" title="คลิกเพื่อคัดลอก">${item.code}</div>
+                       <div class="code-hint">👆 คลิกเพื่อคัดลอกโค้ด</div>`
+                    : `<div style="color:var(--vc-text-dim);font-size:13px;">ไม่มีโค้ด</div>`;
+                return `<div class="mb-code-card">
+                    <div class="mb-code-card-header">
+                        <div class="emoji">${pEmoji}${tEmoji}</div>
+                        <div class="info">
+                            <h4>${item.rewardName}</h4>
+                            <div class="meta">🪙 ${item.pointsSpent.toLocaleString()} แต้ม · ${mbFormatDate(item.redeemedAt)}</div>
+                        </div>
+                    </div>
+                    <div class="mb-code-card-body">
+                        ${codeHtml}
+                        <div><span class="code-status ${statusClass}">${statusText}</span></div>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch (err) { console.error('Load codes error:', err); }
+    }
+
+    async function mbLoadRewards() {
+        try {
+            const { data: items } = await mbApiFetch(`${MB_API_BASE}/api/member/rewards`);
+            const container = document.getElementById('mbRewardList');
+            if (!items.length) { container.innerHTML = `<div class="mb-empty-state"><div class="icon">🎁</div><p>ยังไม่มีของรางวัล<br>โปรดติดตามเร็วๆ นี้!</p></div>`; return; }
+            const myPoints = mbCurrentMember.pointBalance?.availablePoints || 0;
+            container.innerHTML = items.map(item => {
+                const canRedeem = myPoints >= item.pointsCost && item.stockRemaining > 0;
+                const emoji = { 'DISCOUNT_CODE': '🏷️', 'FREE_SHIPPING': '🚚', 'GIFT': '🎁', 'COUPON': '🎟️' }[item.rewardType] || '🎁';
+                return `<div class="mb-reward-card"><div class="mb-reward-img">${emoji}</div><div class="mb-reward-body"><h3>${item.rewardName}</h3><div class="desc">${item.description || ''}</div><div class="mb-reward-footer"><div><div class="mb-reward-cost">🪙 ${item.pointsCost.toLocaleString()} แต้ม</div><div class="mb-reward-stock">เหลือ ${item.stockRemaining} ชิ้น</div></div><button class="mb-btn-redeem" ${canRedeem ? '' : 'disabled'} onclick="mbRedeemReward(${item.rewardId}, '${item.rewardName.replace(/'/g, "\\'")}', ${item.pointsCost})">แลก</button></div></div></div>`;
+            }).join('');
+        } catch (err) { console.error('Load rewards error:', err); }
+    }
+
+    async function mbRedeemReward(rewardId, name, cost) {
+        const modal = document.getElementById('mbRedeemModal');
+        const title = document.getElementById('mbModalTitle');
+        const body = document.getElementById('mbModalBody');
+        title.textContent = name;
+        body.innerHTML = `<div class="mb-spinner" style="margin:20px auto;"></div><p style="color:var(--vc-text-dim);">กำลังแลก...</p>`;
+        modal.classList.add('show');
+        try {
+            const { ok: redeemOk, data: result } = await mbApiFetch(`${MB_API_BASE}/api/member/rewards/redeem`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ memberId: mbCurrentMember.memberId, rewardId })
+            });
+            if (redeemOk) {
+                const codeHtml = result.code
+                    ? `<div class="code">${result.code}</div><div class="mb-code-hint">👆 นำโค้ดนี้ไปกรอกตอนสั่งซื้อสินค้า 👆</div><button class="mb-btn-copy" id="mbBtnCopy" onclick="mbCopyCode('${result.code}')">📋 คัดลอกโค้ด</button>`
+                    : '';
+                body.innerHTML = `<div class="icon">🎉</div><h3>แลกสำเร็จ!</h3>${codeHtml}<div class="msg">ใช้แต้ม ${cost.toLocaleString()} แต้ม</div>`;
+                const { data: refreshed } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}`);
+                mbCurrentMember = refreshed; mbRenderProfile(); await mbLoadRewards(); await mbLoadMyCodes();
+            } else {
+                body.innerHTML = `<div class="icon">😔</div><h3>ไม่สำเร็จ</h3><div class="msg">${result.error || 'เกิดข้อผิดพลาด'}</div>`;
+            }
+        } catch (err) {
+            body.innerHTML = `<div class="icon">❌</div><h3>เกิดข้อผิดพลาด</h3><div class="msg">${err.message}</div>`;
+        }
+    }
+
+    function mbCloseModal() { document.getElementById('mbRedeemModal').classList.remove('show'); }
+
+    async function mbCopyCode(code) {
+        try {
+            await navigator.clipboard.writeText(code);
+            const btn = document.getElementById('mbBtnCopy');
+            btn.innerHTML = '✅ คัดลอกแล้ว!'; btn.classList.add('copied');
+            setTimeout(() => { btn.innerHTML = '📋 คัดลอกโค้ด'; btn.classList.remove('copied'); }, 2000);
+        } catch (err) {
+            const ta = document.createElement('textarea');
+            ta.value = code; document.body.appendChild(ta); ta.select();
+            document.execCommand('copy'); document.body.removeChild(ta);
+            document.getElementById('mbBtnCopy').innerHTML = '✅ คัดลอกแล้ว!';
+        }
+    }
+
+    function mbRenderAccount() {
+        const m = mbCurrentMember;
+        let html = `
+            <div class="mb-account-item"><div class="mb-account-icon">🆔</div><div class="mb-account-info"><div class="label">รหัสสมาชิก</div><div class="value">${m.memberCode}</div></div></div>
+            <div class="mb-account-item"><div class="mb-account-icon">📱</div><div class="mb-account-info"><div class="label">เบอร์โทร</div><div class="value">${m.phone || 'ยังไม่ระบุ'}</div></div></div>
+            <div class="mb-account-item"><div class="mb-account-icon">📧</div><div class="mb-account-info"><div class="label">อีเมล</div><div class="value">${m.email || 'ยังไม่ระบุ'}</div></div></div>
+            <div class="mb-account-item"><div class="mb-account-icon">📅</div><div class="mb-account-info"><div class="label">สมัครเมื่อ</div><div class="value">${mbFormatDate(m.registeredAt)}</div></div></div>`;
+        if (m.identities?.length) {
+            html += `<h3 style="margin:20px 0 10px;font-size:15px;color:var(--vc-primary);">💬 LINE ที่เชื่อมต่อ</h3>`;
+            m.identities.forEach(id => {
+                html += `<div class="mb-account-item"><div class="mb-account-icon">💚</div><div class="mb-account-info"><div class="label">${id.providerType}</div><div class="value">${id.displayName || id.providerUserKey}</div></div></div>`;
+            });
+        }
+        document.getElementById('mbAccountInfo').innerHTML = html;
+    }
+
+    function mbShowTab(name) {
+        document.querySelectorAll('.mb-tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.mb-tab-btn').forEach(el => el.classList.remove('active'));
+        document.getElementById('mb-tab-' + name).classList.add('active');
+        event.target.classList.add('active');
+    }
+
+    function mbFormatDate(dateStr) {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })
+            + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function mbToggleEdit(show) {
+        const form = document.getElementById('mbEditForm');
+        const btn = document.getElementById('mbBtnEdit');
+        document.getElementById('mbEditMsg').style.display = 'none';
+        if (show) {
+            document.getElementById('mbEditDisplayName').value = mbCurrentMember.displayName || '';
+            document.getElementById('mbEditPhone').value = mbCurrentMember.phone || '';
+            document.getElementById('mbEditEmail').value = mbCurrentMember.email || '';
+            form.classList.add('show'); btn.style.display = 'none';
+        } else { form.classList.remove('show'); btn.style.display = 'flex'; }
+    }
+
+    async function mbSaveProfile() {
+        const btn = document.getElementById('mbBtnSave');
+        const msg = document.getElementById('mbEditMsg');
+        btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก...'; msg.style.display = 'none';
+        try {
+            const { ok, data } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/profile`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    DisplayName: document.getElementById('mbEditDisplayName').value.trim(),
+                    Phone: document.getElementById('mbEditPhone').value.trim(),
+                    Email: document.getElementById('mbEditEmail').value.trim()
+                })
+            });
+            if (ok) {
+                mbCurrentMember = data; mbRenderProfile(); mbRenderAccount();
+                msg.className = 'mb-form-msg success'; msg.textContent = '✅ บันทึกเรียบร้อย!'; msg.style.display = 'block';
+                setTimeout(() => mbToggleEdit(false), 1500);
+            } else { msg.className = 'mb-form-msg error'; msg.textContent = '❌ ' + (data.error || 'ไม่สามารถบันทึกได้'); msg.style.display = 'block'; }
+        } catch (err) { msg.className = 'mb-form-msg error'; msg.textContent = '❌ ' + err.message; msg.style.display = 'block'; }
+        finally { btn.disabled = false; btn.textContent = '💾 บันทึก'; }
+    }
+
+    function mbTogglePlatformForm(show) {
+        const form = document.getElementById('mbPlatformForm');
+        const btn = document.getElementById('mbBtnAddPlatform');
+        document.getElementById('mbLinkMsg').style.display = 'none';
+        if (show) {
+            document.getElementById('mbLinkPlatformType').value = '';
+            document.getElementById('mbLinkAccountKey').value = '';
+            document.getElementById('mbLinkAccountName').value = '';
+            form.classList.add('show'); btn.style.display = 'none';
+        } else { form.classList.remove('show'); btn.style.display = 'flex'; }
+    }
+
+    async function mbSubmitPlatformLink() {
+        const platformType = document.getElementById('mbLinkPlatformType').value;
+        const accountKey = document.getElementById('mbLinkAccountKey').value.trim();
+        const accountName = document.getElementById('mbLinkAccountName').value.trim();
+        const msg = document.getElementById('mbLinkMsg');
+        const btn = document.getElementById('mbBtnLinkSave');
+        if (!platformType) { msg.className = 'mb-form-msg error'; msg.textContent = '⚠️ กรุณาเลือกแพลตฟอร์ม'; msg.style.display = 'block'; return; }
+        if (!accountKey) { msg.className = 'mb-form-msg error'; msg.textContent = '⚠️ กรุณากรอกชื่อบัญชี'; msg.style.display = 'block'; return; }
+        btn.disabled = true; btn.textContent = '⏳ กำลังส่ง...'; msg.style.display = 'none';
+        try {
+            const { ok, data } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/platform-link`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ PlatformType: platformType, PlatformAccountKey: accountKey, PlatformAccountName: accountName || null })
+            });
+            if (ok) { msg.className = 'mb-form-msg success'; msg.textContent = '✅ ส่งคำขอเรียบร้อย!'; msg.style.display = 'block'; await mbLoadPlatformRequests(); setTimeout(() => mbTogglePlatformForm(false), 2000); }
+            else { msg.className = 'mb-form-msg error'; msg.textContent = '❌ ' + (data.error || 'ไม่สามารถส่งคำขอได้'); msg.style.display = 'block'; }
+        } catch (err) { msg.className = 'mb-form-msg error'; msg.textContent = '❌ ' + err.message; msg.style.display = 'block'; }
+        finally { btn.disabled = false; btn.textContent = '📤 ส่งคำขอ'; }
+    }
+
+    async function mbLoadPlatformRequests() {
+        try {
+            const { data: requests } = await mbApiFetch(`${MB_API_BASE}/api/member/${mbCurrentMember.memberId}/platform-requests`);
+            const container = document.getElementById('mbPlatformRequests');
+            if (!requests.length) { container.innerHTML = ''; return; }
+            container.innerHTML = '<h3 style="margin:12px 0 8px;font-size:14px;color:var(--vc-text-dim);">📋 คำขอผูกบัญชี</h3>' +
+                requests.map(r => {
+                    const pEmoji = { 'SHOPEE': '🟠', 'LAZADA': '🔵', 'TIKTOK': '⚫' }[r.platformType] || '🏪';
+                    const si = { 'Pending': { text: '⏳ รอดำเนินการ', color: 'var(--vc-warning)' }, 'Approved': { text: '✅ อนุมัติแล้ว', color: 'var(--vc-success)' }, 'Rejected': { text: '❌ ปฏิเสธ', color: 'var(--vc-danger)' } }[r.requestStatus] || { text: r.requestStatus, color: 'var(--vc-text-dim)' };
+                    return `<div class="mb-account-item"><div class="mb-account-icon">${pEmoji}</div><div class="mb-account-info" style="flex:1;"><div class="label">${r.platformType} — ${r.platformAccountName || r.platformAccountKey}</div><div class="value" style="color:${si.color};font-size:13px;">${si.text}</div>${r.reviewNote ? `<div style="font-size:11px;color:var(--vc-text-dim);margin-top:2px;">💬 ${r.reviewNote}</div>` : ''}</div></div>`;
+                }).join('');
+        } catch (err) { console.error('Load platform requests error:', err); }
+    }
+
+    function mbRenderPlatformList() {
+        const container = document.getElementById('mbPlatformList');
+        const accounts = mbCurrentMember.platformAccounts || [];
+        if (!accounts.length) { container.innerHTML = `<div class="mb-empty-state" style="padding:20px;"><div class="icon" style="font-size:32px;">🛒</div><p style="font-size:13px;">ยังไม่มีแพลตฟอร์มที่ผูก<br>กดปุ่มด้านล่างเพื่อเพิ่ม</p></div>`; return; }
+        container.innerHTML = accounts.map(pa => {
+            const pEmoji = { 'SHOPEE': '🟠', 'LAZADA': '🔵', 'TIKTOK': '⚫' }[(pa.platformType || '').toUpperCase()] || '🏪';
+            const badge = pa.verifiedStatus === 'Verified' ? '<span style="color:var(--vc-success);font-size:11px;">✅ ยืนยันแล้ว</span>' : `<span style="color:var(--vc-warning);font-size:11px;">⏳ ${pa.verifiedStatus}</span>`;
+            return `<div class="mb-account-item"><div class="mb-account-icon">${pEmoji}</div><div class="mb-account-info"><div class="label">${pa.platformType} ${badge}</div><div class="value">${pa.platformAccountName || pa.platformAccountKey}</div></div></div>`;
+        }).join('');
+    }
+
+    mbInit();
+    </script>
+</body>
+</html>

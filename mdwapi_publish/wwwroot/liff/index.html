@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TT Member</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        :root {
+            --primary: #6C63FF;
+            --primary-dark: #5A52E0;
+            --accent: #FF6B9D;
+            --bg-dark: #0F0E17;
+            --bg-card: #1A1930;
+            --bg-card2: #232147;
+            --text: #FFFFFE;
+            --text-dim: #A7A9BE;
+            --success: #2CB67D;
+            --warning: #FF8906;
+            --gradient1: linear-gradient(135deg, #6C63FF 0%, #FF6B9D 100%);
+            --gradient2: linear-gradient(135deg, #2CB67D 0%, #6C63FF 100%);
+            --shadow: 0 8px 32px rgba(108,99,255,0.2);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Prompt', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .loading-screen {
+            position: fixed; inset: 0; z-index: 999;
+            background: var(--bg-dark);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+        .loading-screen.hidden { opacity: 0; pointer-events: none; }
+        .spinner {
+            width: 48px; height: 48px;
+            border: 3px solid var(--bg-card2);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-screen p { margin-top: 16px; color: var(--text-dim); font-size: 14px; }
+
+        /* ── Header ── */
+        .header {
+            background: var(--gradient1);
+            padding: 24px 20px 60px;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::after {
+            content: '';
+            position: absolute; bottom: -30px; left: -10%; right: -10%;
+            height: 60px;
+            background: var(--bg-dark);
+            border-radius: 50% 50% 0 0;
+        }
+        .profile-section {
+            display: flex; align-items: center; gap: 14px;
+        }
+        .profile-pic {
+            width: 56px; height: 56px; border-radius: 50%;
+            border: 3px solid rgba(255,255,255,0.3);
+            object-fit: cover;
+        }
+        .profile-pic-placeholder {
+            width: 56px; height: 56px; border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px;
+        }
+        .profile-info h2 { font-size: 18px; font-weight: 600; }
+        .profile-info p { font-size: 12px; opacity: 0.8; }
+        .member-badge {
+            display: inline-block; padding: 2px 10px;
+            background: rgba(255,255,255,0.2); border-radius: 12px;
+            font-size: 11px; margin-top: 4px;
+        }
+
+        /* ── Points Card ── */
+        .points-card {
+            margin: -30px 16px 16px;
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 24px;
+            position: relative; z-index: 2;
+            box-shadow: var(--shadow);
+            border: 1px solid rgba(108,99,255,0.15);
+        }
+        .points-label { font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
+        .points-value {
+            font-size: 42px; font-weight: 700;
+            background: var(--gradient1);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.1;
+        }
+        .points-unit { font-size: 16px; color: var(--text-dim); margin-left: 4px; }
+        .points-stats {
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 8px; margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+        .stat-item { text-align: center; }
+        .stat-item .val { font-size: 16px; font-weight: 600; color: var(--text); }
+        .stat-item .lbl { font-size: 11px; color: var(--text-dim); }
+
+        /* ── Tabs ── */
+        .tabs {
+            display: flex; gap: 4px; padding: 0 16px; margin-bottom: 16px;
+        }
+        .tab-btn {
+            flex: 1; padding: 10px 0;
+            background: var(--bg-card);
+            border: none; border-radius: 12px;
+            color: var(--text-dim); font-size: 13px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .tab-btn.active {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 15px rgba(108,99,255,0.4);
+        }
+
+        /* ── Content ── */
+        .tab-content { display: none; padding: 0 16px 100px; }
+        .tab-content.active { display: block; animation: fadeUp 0.3s ease; }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── History ── */
+        .history-item {
+            display: flex; align-items: center; gap: 12px;
+            background: var(--bg-card);
+            border-radius: 14px; padding: 14px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(255,255,255,0.04);
+        }
+        .history-icon {
+            width: 40px; height: 40px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; flex-shrink: 0;
+        }
+        .history-icon.earn { background: rgba(44,182,125,0.15); }
+        .history-icon.burn { background: rgba(255,107,157,0.15); }
+        .history-icon.adjust { background: rgba(255,137,6,0.15); }
+        .history-info { flex: 1; }
+        .history-info .type { font-size: 13px; font-weight: 500; }
+        .history-info .date { font-size: 11px; color: var(--text-dim); }
+        .history-points { font-size: 16px; font-weight: 600; text-align: right; }
+        .history-points.positive { color: var(--success); }
+        .history-points.negative { color: var(--accent); }
+
+        /* ── Rewards ── */
+        .reward-card {
+            background: var(--bg-card);
+            border-radius: 16px; overflow: hidden;
+            margin-bottom: 12px;
+            border: 1px solid rgba(255,255,255,0.04);
+            transition: transform 0.2s;
+        }
+        .reward-card:active { transform: scale(0.98); }
+        .reward-img {
+            width: 100%; height: 140px;
+            background: var(--gradient2);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 48px;
+        }
+        .reward-body { padding: 14px; }
+        .reward-body h3 { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+        .reward-body .desc { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+        .reward-footer {
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .reward-cost {
+            font-size: 14px; font-weight: 600;
+            color: var(--warning);
+        }
+        .reward-stock { font-size: 11px; color: var(--text-dim); }
+        .btn-redeem {
+            padding: 8px 20px;
+            background: var(--gradient1);
+            border: none; border-radius: 10px;
+            color: white; font-size: 13px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: transform 0.2s;
+        }
+        .btn-redeem:active { transform: scale(0.95); }
+        .btn-redeem:disabled {
+            opacity: 0.4; cursor: not-allowed;
+        }
+
+        /* ── Account ── */
+        .account-item {
+            display: flex; align-items: center; gap: 12px;
+            background: var(--bg-card);
+            border-radius: 14px; padding: 14px;
+            margin-bottom: 8px;
+        }
+        .account-icon {
+            width: 40px; height: 40px; border-radius: 12px;
+            background: rgba(108,99,255,0.15);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px;
+        }
+        .account-info { flex: 1; }
+        .account-info .label { font-size: 12px; color: var(--text-dim); }
+        .account-info .value { font-size: 14px; font-weight: 500; }
+
+        .empty-state {
+            text-align: center; padding: 40px 20px;
+            color: var(--text-dim);
+        }
+        .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+        .empty-state p { font-size: 14px; }
+
+        /* ── Modal ── */
+        .modal-overlay {
+            position: fixed; inset: 0; z-index: 100;
+            background: rgba(0,0,0,0.6);
+            display: none; align-items: flex-end; justify-content: center;
+            animation: fadeIn 0.2s;
+        }
+        .modal-overlay.show { display: flex; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .modal-content {
+            background: var(--bg-card);
+            border-radius: 24px 24px 0 0;
+            padding: 24px;
+            width: 100%; max-width: 500px;
+            animation: slideUp 0.3s ease;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+        .modal-content h3 { font-size: 18px; margin-bottom: 16px; text-align: center; }
+        .modal-result { text-align: center; padding: 20px 0; }
+        .modal-result .icon { font-size: 56px; margin-bottom: 12px; }
+        .modal-result .msg { font-size: 15px; color: var(--text-dim); margin-top: 8px; }
+        .modal-result .code {
+            display: inline-block; padding: 14px 28px; margin-top: 12px;
+            background: var(--bg-card2);
+            border: 2px dashed var(--success);
+            border-radius: 12px; font-size: 22px; font-weight: 700;
+            letter-spacing: 3px; color: var(--success);
+            position: relative;
+        }
+        .code-hint {
+            font-size: 12px; color: var(--text-dim); margin-top: 8px;
+        }
+        .btn-copy {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 20px; margin-top: 12px;
+            background: var(--gradient2);
+            border: none; border-radius: 10px;
+            color: white; font-size: 14px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; transition: transform 0.2s;
+        }
+        .btn-copy:active { transform: scale(0.95); }
+        .btn-copy.copied { background: var(--success); }
+        .btn-close-modal {
+            width: 100%; padding: 14px;
+            background: var(--bg-card2);
+            border: none; border-radius: 14px;
+            color: var(--text); font-size: 15px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; margin-top: 16px;
+        }
+
+        /* ── Edit Profile ── */
+        .btn-edit {
+            display: flex; align-items: center; gap: 6px;
+            margin: 12px 0; padding: 12px 20px;
+            background: var(--gradient1);
+            border: none; border-radius: 12px;
+            color: white; font-size: 14px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer; width: 100%;
+            justify-content: center;
+            transition: transform 0.2s;
+        }
+        .btn-edit:active { transform: scale(0.97); }
+        .edit-form {
+            display: none;
+            background: var(--bg-card);
+            border-radius: 16px; padding: 20px;
+            margin-bottom: 12px;
+            border: 1px solid rgba(108,99,255,0.2);
+        }
+        .edit-form.show { display: block; animation: fadeUp 0.3s ease; }
+        .edit-form h3 {
+            font-size: 16px; margin-bottom: 16px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .form-group { margin-bottom: 14px; }
+        .form-group label {
+            display: block; font-size: 12px;
+            color: var(--text-dim); margin-bottom: 4px;
+        }
+        .form-group input {
+            width: 100%; padding: 12px 14px;
+            background: var(--bg-card2);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            color: var(--text); font-size: 14px;
+            font-family: 'Prompt', sans-serif;
+            outline: none; transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            border-color: var(--primary);
+        }
+        .form-group input::placeholder { color: var(--text-dim); opacity: 0.5; }
+        .form-actions {
+            display: flex; gap: 8px; margin-top: 16px;
+        }
+        .btn-save {
+            flex: 1; padding: 12px;
+            background: var(--gradient1);
+            border: none; border-radius: 12px;
+            color: white; font-size: 14px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer;
+        }
+        .btn-save:disabled { opacity: 0.6; cursor: wait; }
+        .btn-cancel {
+            flex: 1; padding: 12px;
+            background: var(--bg-card2);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            color: var(--text-dim); font-size: 14px;
+            font-family: 'Prompt', sans-serif; font-weight: 500;
+            cursor: pointer;
+        }
+        .form-msg {
+            text-align: center; font-size: 13px;
+            margin-top: 10px; padding: 8px;
+            border-radius: 8px;
+        }
+        .form-msg.success {
+            background: rgba(44,182,125,0.1);
+            color: var(--success);
+        }
+        .form-msg.error {
+            background: rgba(255,107,157,0.1);
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="spinner"></div>
+        <p>กำลังเข้าสู่ระบบ...</p>
+    </div>
+
+    <!-- App -->
+    <div id="app" style="display:none;">
+        <!-- Header -->
+        <div class="header">
+            <div class="profile-section">
+                <img id="profilePic" class="profile-pic" src="" alt="" style="display:none">
+                <div class="profile-pic-placeholder" id="profilePlaceholder">👤</div>
+                <div class="profile-info">
+                    <h2 id="displayName">-</h2>
+                    <p id="memberCode">-</p>
+                    <span class="member-badge" id="memberStatus">Active</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Points Card -->
+        <div class="points-card">
+            <div class="points-label">แต้มสะสมคงเหลือ</div>
+            <div>
+                <span class="points-value" id="availablePoints">0</span>
+                <span class="points-unit">แต้ม</span>
+            </div>
+            <div class="points-stats">
+                <div class="stat-item">
+                    <div class="val" id="totalEarned">0</div>
+                    <div class="lbl">สะสมทั้งหมด</div>
+                </div>
+                <div class="stat-item">
+                    <div class="val" id="totalBurned">0</div>
+                    <div class="lbl">ใช้ไปแล้ว</div>
+                </div>
+                <div class="stat-item">
+                    <div class="val" id="reservedPoints">0</div>
+                    <div class="lbl">จองอยู่</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="showTab('history')">📋 ประวัติ</button>
+            <button class="tab-btn" onclick="showTab('rewards')">🎁 แลกของรางวัล</button>
+            <button class="tab-btn" onclick="showTab('account')">👤 บัญชี</button>
+        </div>
+
+        <!-- Tab: History -->
+        <div class="tab-content active" id="tab-history">
+            <div id="historyList"></div>
+        </div>
+
+        <!-- Tab: Rewards -->
+        <div class="tab-content" id="tab-rewards">
+            <div id="rewardList"></div>
+        </div>
+
+        <!-- Tab: Account -->
+        <div class="tab-content" id="tab-account">
+            <div id="accountInfo"></div>
+
+            <!-- Edit Form -->
+            <div class="edit-form" id="editForm">
+                <h3>✏️ แก้ไขข้อมูลส่วนตัว</h3>
+                <div class="form-group">
+                    <label>ชื่อที่แสดง</label>
+                    <input type="text" id="editDisplayName" placeholder="กรอกชื่อ">
+                </div>
+                <div class="form-group">
+                    <label>เบอร์โทรศัพท์</label>
+                    <input type="tel" id="editPhone" placeholder="0812345678" maxlength="10">
+                </div>
+                <div class="form-group">
+                    <label>อีเมล</label>
+                    <input type="email" id="editEmail" placeholder="email@example.com">
+                </div>
+                <div class="form-actions">
+                    <button class="btn-save" id="btnSave" onclick="saveProfile()">💾 บันทึก</button>
+                    <button class="btn-cancel" onclick="toggleEdit(false)">ยกเลิก</button>
+                </div>
+                <div class="form-msg" id="editMsg" style="display:none;"></div>
+            </div>
+
+            <button class="btn-edit" id="btnEdit" onclick="toggleEdit(true)">✏️ แก้ไขข้อมูลส่วนตัว</button>
+
+            <!-- Platform Section -->
+            <h3 style="margin:20px 0 10px;font-size:15px;">🛒 แพลตฟอร์มที่ผูก</h3>
+            <div id="platformList"></div>
+
+            <!-- Platform Link Form -->
+            <div class="edit-form" id="platformForm">
+                <h3>🔗 ผูกบัญชีแพลตฟอร์มใหม่</h3>
+                <div class="form-group">
+                    <label>แพลตฟอร์ม</label>
+                    <select id="linkPlatformType" style="width:100%;padding:12px 14px;background:var(--bg-card2);border:1px solid rgba(255,255,255,0.08);border-radius:10px;color:var(--text);font-size:14px;font-family:'Prompt',sans-serif;outline:none;-webkit-appearance:none;">
+                        <option value="">-- เลือกแพลตฟอร์ม --</option>
+                        <option value="SHOPEE">🟠 Shopee</option>
+                        <option value="LAZADA">🔵 Lazada</option>
+                        <option value="TIKTOK">⚫ TikTok Shop</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>ชื่อบัญชี / Username</label>
+                    <input type="text" id="linkAccountKey" placeholder="เช่น buyer_username">
+                </div>
+                <div class="form-group">
+                    <label>ชื่อที่แสดงบนแพลตฟอร์ม (ไม่บังคับ)</label>
+                    <input type="text" id="linkAccountName" placeholder="เช่น ร้าน ABC">
+                </div>
+                <div class="form-actions">
+                    <button class="btn-save" id="btnLinkSave" onclick="submitPlatformLink()">📤 ส่งคำขอ</button>
+                    <button class="btn-cancel" onclick="togglePlatformForm(false)">ยกเลิก</button>
+                </div>
+                <div class="form-msg" id="linkMsg" style="display:none;"></div>
+            </div>
+            <button class="btn-edit" id="btnAddPlatform" onclick="togglePlatformForm(true)" style="background:var(--gradient2);">🔗 ผูกบัญชีแพลตฟอร์มใหม่</button>
+
+            <!-- Pending Requests -->
+            <div id="platformRequests" style="margin-top:12px;"></div>
+        </div>
+    </div>
+
+    <!-- Redeem Modal -->
+    <div class="modal-overlay" id="redeemModal">
+        <div class="modal-content">
+            <h3 id="modalTitle">แลกของรางวัล</h3>
+            <div class="modal-result" id="modalBody"></div>
+            <button class="btn-close-modal" onclick="closeModal()">ปิด</button>
+        </div>
+    </div>
+
+    <script>
+    let LIFF_ID = null;  // loaded dynamically from /api/line/config
+    const API_BASE = '';  // same origin
+
+    let currentMember = null;
+    let lineAccessToken = null;
+
+    // ── Convert PascalCase to camelCase (API returns PascalCase) ──
+    function toCamel(obj) {
+        if (Array.isArray(obj)) return obj.map(toCamel);
+        if (obj !== null && typeof obj === 'object') {
+            return Object.keys(obj).reduce((result, key) => {
+                const camelKey = key.charAt(0).toLowerCase() + key.slice(1);
+                result[camelKey] = toCamel(obj[key]);
+                return result;
+            }, {});
+        }
+        return obj;
+    }
+
+    async function apiFetch(url, options) {
+        const resp = await fetch(url, options);
+        const data = await resp.json();
+        return { ok: resp.ok, data: toCamel(data) };
+    }
+
+    // ── Init ──
+    async function init() {
+        try {
+            // Load LIFF ID from API
+            if (!LIFF_ID) {
+                try {
+                    const cfgResp = await fetch(`${API_BASE}/api/line/config`);
+                    const cfg = await cfgResp.json();
+                    LIFF_ID = cfg.liffId;
+                    console.log('[LIFF] Loaded LIFF ID:', LIFF_ID);
+                } catch (e) {
+                    console.error('[LIFF] Failed to load config', e);
+                }
+            }
+            if (!LIFF_ID) { document.body.innerHTML = '<p style="padding:20px;text-align:center">ไม่พบ LIFF Config กรุณาตั้งค่า LINE OA ก่อน</p>'; return; }
+
+            try {
+                await liff.init({ liffId: LIFF_ID });
+            } catch (liffErr) {
+                const errMsg = (liffErr?.message || String(liffErr)).toLowerCase();
+                if (errMsg.includes('code_verifier') || errMsg.includes('pkce') || errMsg.includes('invalid_grant')) {
+                    console.warn('LIFF PKCE error — clearing cache and re-login', liffErr);
+                    Object.keys(localStorage).forEach(k => {
+                        if (k.startsWith('LIFF_STORE:')) localStorage.removeItem(k);
+                    });
+                    Object.keys(sessionStorage).forEach(k => {
+                        if (k.startsWith('LIFF_STORE:')) sessionStorage.removeItem(k);
+                    });
+                    try { await liff.init({ liffId: LIFF_ID }); } catch (e2) { console.warn('Re-init failed', e2); }
+                    liff.login();
+                    return;
+                }
+                throw liffErr;
+            }
+
+            if (!liff.isLoggedIn()) {
+                liff.login();
+                return;
+            }
+
+            lineAccessToken = liff.getAccessToken();
+
+            // Auth with backend
+            const { ok, data } = await apiFetch(`${API_BASE}/api/line/auth`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessToken: lineAccessToken, liffId: LIFF_ID })
+            });
+
+            if (!ok) throw new Error('Auth failed');
+
+            currentMember = data.member;
+
+            renderProfile();
+            await Promise.all([loadHistory(), loadRewards()]);
+            renderAccount();
+            renderPlatformList();
+            await loadPlatformRequests();
+
+            document.getElementById('app').style.display = 'block';
+            document.getElementById('loadingScreen').classList.add('hidden');
+        } catch (err) {
+            console.error('Init error:', err);
+            const errMsg = (err?.message || String(err)).toLowerCase();
+            if (errMsg.includes('code_verifier') || errMsg.includes('pkce')) {
+                document.querySelector('#loadingScreen p').innerHTML =
+                    'เกิดข้อผิดพลาดในการเข้าสู่ระบบ<br>' +
+                    '<button onclick="location.reload()" style="margin-top:12px;padding:8px 24px;' +
+                    'border:none;border-radius:8px;background:#06c755;color:#fff;font-size:16px;cursor:pointer">' +
+                    '🔄 ลองใหม่</button>';
+            } else {
+                document.querySelector('#loadingScreen p').textContent = 'เกิดข้อผิดพลาด: ' + err.message;
+            }
+        }
+    }
+
+    // ── Profile ──
+    function renderProfile() {
+        const m = currentMember;
+        document.getElementById('displayName').textContent = m.displayName || 'สมาชิก';
+        document.getElementById('memberCode').textContent = m.memberCode;
+        document.getElementById('memberStatus').textContent = m.status;
+
+        const pic = m.identities?.find(i => i.pictureUrl)?.pictureUrl;
+        if (pic) {
+            const img = document.getElementById('profilePic');
+            img.src = pic;
+            img.style.display = 'block';
+            document.getElementById('profilePlaceholder').style.display = 'none';
+        }
+
+        // Points
+        const pb = m.pointBalance || {};
+        document.getElementById('availablePoints').textContent = (pb.availablePoints || 0).toLocaleString();
+        document.getElementById('totalEarned').textContent = (pb.totalEarned || 0).toLocaleString();
+        document.getElementById('totalBurned').textContent = (pb.totalBurned || 0).toLocaleString();
+        document.getElementById('reservedPoints').textContent = (pb.reservedPoints || 0).toLocaleString();
+    }
+
+    // ── History ──
+    async function loadHistory() {
+        try {
+            const { data: items } = await apiFetch(`${API_BASE}/api/member/${currentMember.memberId}/points/history`);
+
+            const container = document.getElementById('historyList');
+            if (!items.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">📋</div>
+                        <p>ยังไม่มีประวัติการสะสมแต้ม</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = items.map(item => {
+                const isPositive = item.points > 0;
+                const iconClass = item.txnType === 'EARN' ? 'earn' : item.txnType === 'ADJUST' ? 'adjust' : 'burn';
+                const emoji = item.txnType === 'EARN' ? '✨' : item.txnType === 'BURN' ? '🎁' : item.txnType === 'ADJUST' ? '🔧' : '📦';
+                const typeName = {
+                    'EARN': 'ได้รับแต้ม', 'BURN': 'แลกของรางวัล', 'RESERVE': 'จองแต้ม',
+                    'RELEASE': 'คืนแต้ม', 'ADJUST': 'ปรับแต้ม', 'EXPIRE': 'แต้มหมดอายุ'
+                }[item.txnType] || item.txnType;
+
+                return `
+                    <div class="history-item">
+                        <div class="history-icon ${iconClass}">${emoji}</div>
+                        <div class="history-info">
+                            <div class="type">${typeName}</div>
+                            <div class="date">${formatDate(item.occurredAt)}</div>
+                        </div>
+                        <div class="history-points ${isPositive ? 'positive' : 'negative'}">
+                            ${isPositive ? '+' : ''}${item.points.toLocaleString()}
+                        </div>
+                    </div>`;
+            }).join('');
+        } catch (err) {
+            console.error('Load history error:', err);
+        }
+    }
+
+    // ── Rewards ──
+    async function loadRewards() {
+        try {
+            const { data: items } = await apiFetch(`${API_BASE}/api/member/rewards`);
+
+            const container = document.getElementById('rewardList');
+            if (!items.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">🎁</div>
+                        <p>ยังไม่มีของรางวัล<br>โปรดติดตามเร็วๆ นี้!</p>
+                    </div>`;
+                return;
+            }
+
+            const myPoints = currentMember.pointBalance?.availablePoints || 0;
+            container.innerHTML = items.map(item => {
+                const canRedeem = myPoints >= item.pointsCost && item.stockRemaining > 0;
+                const emoji = { 'DISCOUNT_CODE': '🏷️', 'FREE_SHIPPING': '🚚', 'GIFT': '🎁' }[item.rewardType] || '🎁';
+                return `
+                    <div class="reward-card">
+                        <div class="reward-img">${emoji}</div>
+                        <div class="reward-body">
+                            <h3>${item.rewardName}</h3>
+                            <div class="desc">${item.description || ''}</div>
+                            <div class="reward-footer">
+                                <div>
+                                    <div class="reward-cost">🪙 ${item.pointsCost.toLocaleString()} แต้ม</div>
+                                    <div class="reward-stock">เหลือ ${item.stockRemaining} ชิ้น</div>
+                                </div>
+                                <button class="btn-redeem" ${canRedeem ? '' : 'disabled'}
+                                    onclick="redeemReward(${item.rewardId}, '${item.rewardName}', ${item.pointsCost})">
+                                    แลก
+                                </button>
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
+        } catch (err) {
+            console.error('Load rewards error:', err);
+        }
+    }
+
+    // ── Redeem ──
+    async function redeemReward(rewardId, name, cost) {
+        const modal = document.getElementById('redeemModal');
+        const title = document.getElementById('modalTitle');
+        const body = document.getElementById('modalBody');
+
+        title.textContent = name;
+        body.innerHTML = `<div class="spinner" style="margin:20px auto;"></div><p style="color:var(--text-dim);">กำลังแลก...</p>`;
+        modal.classList.add('show');
+
+        try {
+            const { ok: redeemOk, data: result } = await apiFetch(`${API_BASE}/api/member/rewards/redeem`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ memberId: currentMember.memberId, rewardId })
+            });
+
+            if (redeemOk) {
+                const codeHtml = result.code
+                    ? `<div class="code" id="rewardCode">${result.code}</div>
+                       <div class="code-hint">👆 นำโค้ดนี้ไปกรอกตอนสั่งซื้อสินค้า 👆</div>
+                       <button class="btn-copy" id="btnCopy" onclick="copyCode('${result.code}')">
+                           📋 คัดลอกโค้ด
+                       </button>`
+                    : '';
+                body.innerHTML = `
+                    <div class="icon">🎉</div>
+                    <h3>แลกสำเร็จ!</h3>
+                    ${codeHtml}
+                    <div class="msg">ใช้แต้ม ${cost.toLocaleString()} แต้ม</div>`;
+
+                // Refresh data
+                const { data: refreshed } = await apiFetch(`${API_BASE}/api/member/${currentMember.memberId}`);
+                currentMember = refreshed;
+                renderProfile();
+                await loadRewards();
+            } else {
+                body.innerHTML = `
+                    <div class="icon">😔</div>
+                    <h3>ไม่สำเร็จ</h3>
+                    <div class="msg">${result.error || 'เกิดข้อผิดพลาด'}</div>`;
+            }
+        } catch (err) {
+            body.innerHTML = `
+                <div class="icon">❌</div>
+                <h3>เกิดข้อผิดพลาด</h3>
+                <div class="msg">${err.message}</div>`;
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('redeemModal').classList.remove('show');
+    }
+
+    async function copyCode(code) {
+        try {
+            await navigator.clipboard.writeText(code);
+            const btn = document.getElementById('btnCopy');
+            btn.innerHTML = '✅ คัดลอกแล้ว!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerHTML = '📋 คัดลอกโค้ด';
+                btn.classList.remove('copied');
+            }, 2000);
+        } catch (err) {
+            // Fallback
+            const ta = document.createElement('textarea');
+            ta.value = code;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            const btn = document.getElementById('btnCopy');
+            btn.innerHTML = '✅ คัดลอกแล้ว!';
+            btn.classList.add('copied');
+        }
+    }
+
+    // ── Account ──
+    function renderAccount() {
+        const m = currentMember;
+        const container = document.getElementById('accountInfo');
+
+        let html = `
+            <div class="account-item">
+                <div class="account-icon">🆔</div>
+                <div class="account-info">
+                    <div class="label">รหัสสมาชิก</div>
+                    <div class="value">${m.memberCode}</div>
+                </div>
+            </div>
+            <div class="account-item">
+                <div class="account-icon">📱</div>
+                <div class="account-info">
+                    <div class="label">เบอร์โทร</div>
+                    <div class="value">${m.phone || 'ยังไม่ระบุ'}</div>
+                </div>
+            </div>
+            <div class="account-item">
+                <div class="account-icon">📧</div>
+                <div class="account-info">
+                    <div class="label">อีเมล</div>
+                    <div class="value">${m.email || 'ยังไม่ระบุ'}</div>
+                </div>
+            </div>
+            <div class="account-item">
+                <div class="account-icon">📅</div>
+                <div class="account-info">
+                    <div class="label">สมัครเมื่อ</div>
+                    <div class="value">${formatDate(m.registeredAt)}</div>
+                </div>
+            </div>`;
+
+        // LINE identities
+        if (m.identities?.length) {
+            html += `<h3 style="margin:20px 0 10px;font-size:15px;">💬 LINE ที่เชื่อมต่อ</h3>`;
+            m.identities.forEach(id => {
+                html += `
+                    <div class="account-item">
+                        <div class="account-icon">💚</div>
+                        <div class="account-info">
+                            <div class="label">${id.providerType}</div>
+                            <div class="value">${id.displayName || id.providerUserKey}</div>
+                        </div>
+                    </div>`;
+            });
+        }
+
+        container.innerHTML = html;
+    }
+
+    // ── Tabs ──
+    function showTab(name) {
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+        event.target.classList.add('active');
+    }
+
+    // ── Utils ──
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })
+            + ' ' + d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ── Edit Profile ──
+    function toggleEdit(show) {
+        const form = document.getElementById('editForm');
+        const btn = document.getElementById('btnEdit');
+        const msg = document.getElementById('editMsg');
+        msg.style.display = 'none';
+
+        if (show) {
+            // Pre-fill with current data
+            document.getElementById('editDisplayName').value = currentMember.displayName || '';
+            document.getElementById('editPhone').value = currentMember.phone || '';
+            document.getElementById('editEmail').value = currentMember.email || '';
+            form.classList.add('show');
+            btn.style.display = 'none';
+        } else {
+            form.classList.remove('show');
+            btn.style.display = 'flex';
+        }
+    }
+
+    async function saveProfile() {
+        const btn = document.getElementById('btnSave');
+        const msg = document.getElementById('editMsg');
+        btn.disabled = true;
+        btn.textContent = '⏳ กำลังบันทึก...';
+        msg.style.display = 'none';
+
+        const body = {
+            DisplayName: document.getElementById('editDisplayName').value.trim(),
+            Phone: document.getElementById('editPhone').value.trim(),
+            Email: document.getElementById('editEmail').value.trim()
+        };
+
+        try {
+            const { ok, data } = await apiFetch(`${API_BASE}/api/member/${currentMember.memberId}/profile`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (ok) {
+                currentMember = data;
+                renderProfile();
+                renderAccount();
+
+                msg.className = 'form-msg success';
+                msg.textContent = '✅ บันทึกเรียบร้อย!';
+                msg.style.display = 'block';
+
+                setTimeout(() => toggleEdit(false), 1500);
+            } else {
+                msg.className = 'form-msg error';
+                msg.textContent = '❌ ' + (data.error || 'ไม่สามารถบันทึกได้');
+                msg.style.display = 'block';
+            }
+        } catch (err) {
+            msg.className = 'form-msg error';
+            msg.textContent = '❌ ' + err.message;
+            msg.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '💾 บันทึก';
+        }
+    }
+
+    // ── Platform Account Management ──
+    function togglePlatformForm(show) {
+        const form = document.getElementById('platformForm');
+        const btn = document.getElementById('btnAddPlatform');
+        const msg = document.getElementById('linkMsg');
+        msg.style.display = 'none';
+
+        if (show) {
+            document.getElementById('linkPlatformType').value = '';
+            document.getElementById('linkAccountKey').value = '';
+            document.getElementById('linkAccountName').value = '';
+            form.classList.add('show');
+            btn.style.display = 'none';
+        } else {
+            form.classList.remove('show');
+            btn.style.display = 'flex';
+        }
+    }
+
+    async function submitPlatformLink() {
+        const platformType = document.getElementById('linkPlatformType').value;
+        const accountKey = document.getElementById('linkAccountKey').value.trim();
+        const accountName = document.getElementById('linkAccountName').value.trim();
+        const msg = document.getElementById('linkMsg');
+        const btn = document.getElementById('btnLinkSave');
+
+        if (!platformType) {
+            msg.className = 'form-msg error';
+            msg.textContent = '⚠️ กรุณาเลือกแพลตฟอร์ม';
+            msg.style.display = 'block';
+            return;
+        }
+        if (!accountKey) {
+            msg.className = 'form-msg error';
+            msg.textContent = '⚠️ กรุณากรอกชื่อบัญชี';
+            msg.style.display = 'block';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = '⏳ กำลังส่ง...';
+        msg.style.display = 'none';
+
+        try {
+            const { ok, data } = await apiFetch(`${API_BASE}/api/member/${currentMember.memberId}/platform-link`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    PlatformType: platformType,
+                    PlatformAccountKey: accountKey,
+                    PlatformAccountName: accountName || null
+                })
+            });
+
+            if (ok) {
+                msg.className = 'form-msg success';
+                msg.textContent = '✅ ส่งคำขอเรียบร้อย! รอ Admin อนุมัติ';
+                msg.style.display = 'block';
+                await loadPlatformRequests();
+                setTimeout(() => togglePlatformForm(false), 2000);
+            } else {
+                msg.className = 'form-msg error';
+                msg.textContent = '❌ ' + (data.error || 'ไม่สามารถส่งคำขอได้');
+                msg.style.display = 'block';
+            }
+        } catch (err) {
+            msg.className = 'form-msg error';
+            msg.textContent = '❌ ' + err.message;
+            msg.style.display = 'block';
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '📤 ส่งคำขอ';
+        }
+    }
+
+    async function loadPlatformRequests() {
+        try {
+            const { data: requests } = await apiFetch(`${API_BASE}/api/member/${currentMember.memberId}/platform-requests`);
+            const container = document.getElementById('platformRequests');
+
+            if (!requests.length) {
+                container.innerHTML = '';
+                return;
+            }
+
+            container.innerHTML = '<h3 style="margin:12px 0 8px;font-size:14px;color:var(--text-dim);">📋 คำขอผูกบัญชี</h3>' +
+                requests.map(r => {
+                    const pEmoji = { 'SHOPEE': '🟠', 'LAZADA': '🔵', 'TIKTOK': '⚫' }[r.platformType] || '🏪';
+                    const statusInfo = {
+                        'Pending': { text: '⏳ รอดำเนินการ', color: 'var(--warning)' },
+                        'Approved': { text: '✅ อนุมัติแล้ว', color: 'var(--success)' },
+                        'Rejected': { text: '❌ ปฏิเสธ', color: 'var(--accent)' }
+                    }[r.requestStatus] || { text: r.requestStatus, color: 'var(--text-dim)' };
+
+                    return `
+                        <div class="account-item">
+                            <div class="account-icon">${pEmoji}</div>
+                            <div class="account-info" style="flex:1;">
+                                <div class="label">${r.platformType} — ${r.platformAccountName || r.platformAccountKey}</div>
+                                <div class="value" style="color:${statusInfo.color};font-size:13px;">${statusInfo.text}</div>
+                                ${r.reviewNote ? `<div style="font-size:11px;color:var(--text-dim);margin-top:2px;">💬 ${r.reviewNote}</div>` : ''}
+                            </div>
+                        </div>`;
+                }).join('');
+        } catch (err) {
+            console.error('Load platform requests error:', err);
+        }
+    }
+
+    function renderPlatformList() {
+        const container = document.getElementById('platformList');
+        const accounts = currentMember.platformAccounts || [];
+
+        if (!accounts.length) {
+            container.innerHTML = `
+                <div class="empty-state" style="padding:20px;">
+                    <div class="icon" style="font-size:32px;">🛒</div>
+                    <p style="font-size:13px;">ยังไม่มีแพลตฟอร์มที่ผูก<br>กดปุ่มด้านล่างเพื่อเพิ่ม</p>
+                </div>`;
+            return;
+        }
+
+        container.innerHTML = accounts.map(pa => {
+            const pType = (pa.platformType || '').toUpperCase();
+            const pEmoji = { 'SHOPEE': '🟠', 'LAZADA': '🔵', 'TIKTOK': '⚫' }[pType] || '🏪';
+            const statusBadge = pa.verifiedStatus === 'Verified'
+                ? '<span style="color:var(--success);font-size:11px;">✅ ยืนยันแล้ว</span>'
+                : `<span style="color:var(--warning);font-size:11px;">⏳ ${pa.verifiedStatus}</span>`;
+
+            return `
+                <div class="account-item">
+                    <div class="account-icon">${pEmoji}</div>
+                    <div class="account-info">
+                        <div class="label">${pa.platformType} ${statusBadge}</div>
+                        <div class="value">${pa.platformAccountName || pa.platformAccountKey}</div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    // ── Start ──
+    init();
+    </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-﻿using MDWAPI.Data;
+using MDWAPI.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;

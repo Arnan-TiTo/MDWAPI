@@ -162,3 +162,6 @@ GO
 
 EXEC sp_refreshview 'adw.vw_OrderExportFormatTH';
 GO
+
+EXEC sp_refreshview 'adw.vw_OrderExportCashSaleFormatTH';
+GO
