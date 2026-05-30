@@ -48,5 +48,6 @@ namespace MDWAPI.Models
         public decimal? PaymentTransactionFee { get; set; }
         public decimal? AmsCommissionFee { get; set; }
         public string? SellerVoucherCode { get; set; }
+        public string? PayloadEscrowJson { get; set; }
     }
 }

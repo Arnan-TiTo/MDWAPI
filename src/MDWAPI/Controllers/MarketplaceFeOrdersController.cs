@@ -67,7 +67,10 @@ namespace MDWAPI.Controllers
             decimal? AmsCommissionFee,
             string? SellerVoucherCode,
             FlowAccountAmountsDto FlowAccountAmounts,
-            ReconciliationAmountsDto ReconciliationAmounts
+            ReconciliationAmountsDto ReconciliationAmounts,
+            decimal? SellerVoucher,
+            decimal? ShopeeVoucher,
+            decimal? ShippingFeeSstAmount
         );
 
         public sealed record FlowAccountAmountsDto(
@@ -280,6 +283,23 @@ namespace MDWAPI.Controllers
             var flow = BuildFlowAccountAmounts(o);
             var reconciliation = BuildReconciliationAmounts(o);
 
+            decimal? sellerVoucher = null;
+            decimal? shopeeVoucher = null;
+            decimal? shippingFeeSstAmount = null;
+
+            if (o.Channel == "Shopee")
+            {
+                sellerVoucher = GetJsonDecimalPath(o.PayloadEscrowJson, "Shopee", "seller_voucher", o.DiscountSellerAmount, takeAbs: true);
+                shopeeVoucher = GetJsonDecimalPath(o.PayloadEscrowJson, "Shopee", "shopee_voucher", o.DiscountPlatformAmount, takeAbs: true);
+                shippingFeeSstAmount = GetJsonDecimalPath(o.PayloadEscrowJson, "Shopee", "shipping_fee_sst_amount", o.BuyerPaidShippingFee);
+            }
+            else if (o.Channel == "TikTok")
+            {
+                sellerVoucher = o.DiscountSellerAmount;
+                shopeeVoucher = o.DiscountPlatformAmount;
+                shippingFeeSstAmount = o.BuyerPaidShippingFee ?? o.ShippingFeeAmount;
+            }
+
             return new UnifiedOrderListItemDto(
                 o.UnifiedOrderId,
                 o.ExternalOrderNo,
@@ -313,7 +333,10 @@ namespace MDWAPI.Controllers
                 o.AmsCommissionFee,
                 o.SellerVoucherCode,
                 flow,
-                reconciliation
+                reconciliation,
+                sellerVoucher,
+                shopeeVoucher,
+                shippingFeeSstAmount
             );
         }
 
@@ -364,6 +387,38 @@ namespace MDWAPI.Controllers
                 NetPayoutAmount: Money(o.EscrowAmount),
                 SellerVoucherCode: o.SellerVoucherCode
             );
+        }
+
+        private static decimal? GetJsonDecimalPath(string? json, string channel, string path, decimal? fallback, bool takeAbs = false)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return fallback;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (channel == "Shopee")
+                {
+                    if (root.TryGetProperty("response", out var response) && response.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        if (response.TryGetProperty("buyer_payment_info", out var buyerInfo) && buyerInfo.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            if (buyerInfo.TryGetProperty(path, out var val))
+                            {
+                                decimal? result = null;
+                                if (val.ValueKind == System.Text.Json.JsonValueKind.Number) result = val.GetDecimal();
+                                else if (val.ValueKind == System.Text.Json.JsonValueKind.String && decimal.TryParse(val.GetString(), out var d)) result = d;
+
+                                if (result.HasValue)
+                                {
+                                    return takeAbs ? Math.Abs(result.Value) : result.Value;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch {}
+            return fallback;
         }
 
         private static decimal Money(decimal? value) => decimal.Round(value ?? 0m, 2);
