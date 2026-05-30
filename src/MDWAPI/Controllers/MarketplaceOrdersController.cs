@@ -131,6 +131,13 @@ public class MarketplaceOrdersController : ControllerBase
                         decimal sellerDiscount = order?.DiscountSellerAmount ?? 0;
                         decimal total = order?.TotalAmount ?? 0;
 
+                        long createTime = order?.CreatedTimeUtc.HasValue ?? false 
+                            ? ((DateTimeOffset)order.CreatedTimeUtc.Value).ToUnixTimeSeconds() 
+                            : DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                        long deliveryTime = order?.DeliveredTimeUtc.HasValue ?? false 
+                            ? ((DateTimeOffset)order.DeliveredTimeUtc.Value).ToUnixTimeSeconds() 
+                            : createTime;
+
                         decimal estimatedFee = Math.Round(total * 0.04m, 2);
                         decimal settlement = total - estimatedFee;
 
@@ -147,15 +154,18 @@ public class MarketplaceOrdersController : ControllerBase
                                 "currency": "THB",
                                 "type": "ORDER",
                                 "status": "SETTLED",
-                                "settlement_amount": "{{settlement}}",
+                                "order_create_time": {{createTime}},
+                                "order_delivery_time": {{deliveryTime}},
                                 "revenue_amount": "{{total}}",
+                                "fee_tax_amount": "-{{estimatedFee}}",
+                                "shipping_cost_amount": "0.00",
+                                "settlement_amount": "{{settlement}}",
                                 "revenue_breakdown": {
                                   "subtotal_before_discount_amount": "{{total}}",
                                   "seller_discount_amount": "{{sellerDiscount}}",
                                   "seller_discount_refund_amount": "0.00",
                                   "refund_subtotal_before_discount_amount": "0.00"
                                 },
-                                "fee_tax_amount": "-{{estimatedFee}}",
                                 "fee_tax_breakdown": {
                                   "fee": {
                                     "transaction_fee_amount": "-{{estimatedFee}}",
@@ -173,9 +183,11 @@ public class MarketplaceOrdersController : ControllerBase
                                     "platform_shipping_fee_discount_amount": "0.00",
                                     "shipping_fee_subsidy_amount": "0.00"
                                   }
-                                }
+                                },
+                                "sku_transactions": []
                               }
-                            ]
+                            ],
+                            "next_page_token": ""
                           }
                         }
                         """;
