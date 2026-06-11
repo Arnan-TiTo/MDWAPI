@@ -1,4 +1,5 @@
 using MDWAPI.Data;
+using MDWAPI.Entities;
 using MDWAPI.Models;
 using MDWAPI.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -71,6 +72,29 @@ namespace MDWAPI.Controllers
             decimal? SellerVoucher,
             decimal? ShopeeVoucher,
             decimal? ShippingFeeSstAmount
+        );
+
+        public sealed record UnifiedReturnListItemDto(
+            long UnifiedReturnId,
+            long? UnifiedOrderId,
+            string? Channel,
+            long? ShopId,
+            string? ExternalOrderId,
+            string ExternalReturnId,
+            string? ReturnStatus,
+            string? ReturnReason,
+            string? TextReason,
+            string? ReturnType,
+            string? ReturnSolution,
+            string? NegotiationStatus,
+            decimal? RefundAmount,
+            string? Currency,
+            string? ReturnItemsJson,
+            string? ImagesJson,
+            DateTime? CreatedAtUtc,
+            DateTime? UpdatedAtUtc,
+            DateTime IngestedAtUtc,
+            string? RawJson
         );
 
         public sealed record FlowAccountAmountsDto(
@@ -196,6 +220,90 @@ namespace MDWAPI.Controllers
             ));
         }
 
+        // ====== UNIFIED RETURNS (filter + paging) ======
+        // GET /api/fe/orders/unifiedReturn?channel=Shopee&shopId=123&q=ABC&status=REQUESTED&page=1&pageSize=50
+        [HttpGet("unifiedReturn")]
+        public async Task<ActionResult<PagedResult<UnifiedReturnListItemDto>>> ListUnifiedReturns(
+            [FromQuery] string? channel,
+            [FromQuery] long? shopId,
+            [FromQuery] string? q,
+            [FromQuery] string? orderRef,
+            [FromQuery] string? returnRef,
+            [FromQuery] string? status,
+            [FromQuery] DateTime? fromUtc,
+            [FromQuery] DateTime? toUtc,
+            [FromQuery] string dateField = "updated",
+            [FromQuery] bool includeRaw = false,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50,
+            [FromQuery] string? sort = "updatedDesc",
+            CancellationToken ct = default)
+        {
+            if (page <= 0) page = 1;
+            if (pageSize <= 0 || pageSize > 200) pageSize = 50;
+
+            var qy = _db.UnifiedReturns.AsNoTracking().AsQueryable();
+
+            qy = ApplyUnifiedReturnFilters(qy, channel, shopId, q, orderRef, returnRef, status, fromUtc, toUtc, dateField);
+            qy = ApplyUnifiedReturnSort(qy, sort);
+
+            var total = await qy.CountAsync(ct);
+
+            var rows = await qy
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(ct);
+
+            var data = rows.Select(r => ToReturnListItemDto(r, includeRaw)).ToList();
+
+            return Ok(new PagedResult<UnifiedReturnListItemDto>(
+                TotalItems: total,
+                Page: page,
+                Size: pageSize,
+                Items: data
+            ));
+        }
+
+        // GET /api/fe/orders/unifiedReturn/10
+        [HttpGet("unifiedReturn/{id:long}")]
+        public async Task<ActionResult<UnifiedReturnListItemDto>> GetUnifiedReturnById(
+            long id,
+            [FromQuery] bool includeRaw = true,
+            CancellationToken ct = default)
+        {
+            var row = await _db.UnifiedReturns.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.UnifiedReturnId == id, ct);
+
+            if (row is null) return NotFound();
+            return Ok(ToReturnListItemDto(row, includeRaw));
+        }
+
+        // GET /api/fe/orders/unifiedReturn/by-external/Shopee/250101RETURN
+        [HttpGet("unifiedReturn/by-external/{channel}/{externalReturnId}")]
+        public async Task<ActionResult<UnifiedReturnListItemDto>> GetUnifiedReturnByExternal(
+            string channel,
+            string externalReturnId,
+            [FromQuery] long? shopId = null,
+            [FromQuery] bool includeRaw = true,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(channel) || string.IsNullOrWhiteSpace(externalReturnId))
+                return BadRequest("channel & externalReturnId are required.");
+
+            var qy = _db.UnifiedReturns.AsNoTracking()
+                .Where(x => x.Channel == channel && x.ExternalReturnId == externalReturnId);
+
+            if (shopId is > 0)
+                qy = qy.Where(x => x.ShopId == shopId.Value);
+
+            var row = await qy
+                .OrderByDescending(x => x.UpdatedAtUtc ?? x.CreatedAtUtc ?? x.IngestedAtUtc)
+                .FirstOrDefaultAsync(ct);
+
+            if (row is null) return NotFound();
+            return Ok(ToReturnListItemDto(row, includeRaw));
+        }
+
         // ====== GET by UnifiedOrderId ======
         // GET /api/fe/orders/20014
         [HttpGet("{id:long}")]
@@ -276,6 +384,111 @@ namespace MDWAPI.Controllers
                 .SingleAsync(ct);
 
             return Ok(ToListItemDto(updated));
+        }
+
+        private static IQueryable<UnifiedReturns> ApplyUnifiedReturnFilters(
+            IQueryable<UnifiedReturns> qy,
+            string? channel,
+            long? shopId,
+            string? q,
+            string? orderRef,
+            string? returnRef,
+            string? status,
+            DateTime? fromUtc,
+            DateTime? toUtc,
+            string dateField)
+        {
+            if (!string.IsNullOrWhiteSpace(channel))
+                qy = qy.Where(r => r.Channel == channel);
+
+            if (shopId is > 0)
+                qy = qy.Where(r => r.ShopId == shopId.Value);
+
+            if (!string.IsNullOrWhiteSpace(orderRef))
+                qy = qy.Where(r => r.ExternalOrderId == orderRef);
+
+            if (!string.IsNullOrWhiteSpace(returnRef))
+                qy = qy.Where(r => r.ExternalReturnId == returnRef);
+
+            if (!string.IsNullOrWhiteSpace(status))
+                qy = qy.Where(r => r.ReturnStatus == status);
+
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var kw = q.Trim();
+                qy = qy.Where(r =>
+                    (r.ExternalOrderId ?? "").Contains(kw) ||
+                    r.ExternalReturnId.Contains(kw) ||
+                    (r.ReturnStatus ?? "").Contains(kw) ||
+                    (r.ReturnReason ?? "").Contains(kw) ||
+                    (r.TextReason ?? "").Contains(kw) ||
+                    r.UnifiedReturnId.ToString().Contains(kw)
+                );
+            }
+
+            if (fromUtc.HasValue)
+            {
+                qy = dateField.ToLowerInvariant() switch
+                {
+                    "created" => qy.Where(r => r.CreatedAtUtc.HasValue && r.CreatedAtUtc.Value >= fromUtc.Value),
+                    "ingested" => qy.Where(r => r.IngestedAtUtc >= fromUtc.Value),
+                    _ => qy.Where(r => r.UpdatedAtUtc.HasValue && r.UpdatedAtUtc.Value >= fromUtc.Value)
+                };
+            }
+
+            if (toUtc.HasValue)
+            {
+                qy = dateField.ToLowerInvariant() switch
+                {
+                    "created" => qy.Where(r => r.CreatedAtUtc.HasValue && r.CreatedAtUtc.Value <= toUtc.Value),
+                    "ingested" => qy.Where(r => r.IngestedAtUtc <= toUtc.Value),
+                    _ => qy.Where(r => r.UpdatedAtUtc.HasValue && r.UpdatedAtUtc.Value <= toUtc.Value)
+                };
+            }
+
+            return qy;
+        }
+
+        private static IQueryable<UnifiedReturns> ApplyUnifiedReturnSort(
+            IQueryable<UnifiedReturns> qy,
+            string? sort)
+        {
+            return (sort ?? "").ToLowerInvariant() switch
+            {
+                "createdasc" => qy.OrderBy(r => r.CreatedAtUtc).ThenBy(r => r.UnifiedReturnId),
+                "createddesc" => qy.OrderByDescending(r => r.CreatedAtUtc).ThenByDescending(r => r.UnifiedReturnId),
+                "updatedasc" => qy.OrderBy(r => r.UpdatedAtUtc).ThenBy(r => r.UnifiedReturnId),
+                "ingestedasc" => qy.OrderBy(r => r.IngestedAtUtc).ThenBy(r => r.UnifiedReturnId),
+                "ingesteddesc" => qy.OrderByDescending(r => r.IngestedAtUtc).ThenByDescending(r => r.UnifiedReturnId),
+                _ => qy.OrderByDescending(r => r.UpdatedAtUtc ?? r.CreatedAtUtc ?? r.IngestedAtUtc)
+                    .ThenByDescending(r => r.UnifiedReturnId),
+            };
+        }
+
+        private static UnifiedReturnListItemDto ToReturnListItemDto(UnifiedReturns r, bool includeRaw)
+        {
+            return new UnifiedReturnListItemDto(
+                r.UnifiedReturnId,
+                r.UnifiedOrderId,
+                r.Channel,
+                r.ShopId,
+                r.ExternalOrderId,
+                r.ExternalReturnId,
+                r.ReturnStatus,
+                r.ReturnReason,
+                r.TextReason,
+                r.ReturnType,
+                r.ReturnSolution,
+                r.NegotiationStatus,
+                r.RefundAmount,
+                r.Currency,
+                r.ReturnItemsJson,
+                r.ImagesJson,
+                r.CreatedAtUtc,
+                r.UpdatedAtUtc,
+                r.IngestedAtUtc,
+                includeRaw ? r.RawJson : null
+            );
         }
 
         private static UnifiedOrderListItemDto ToListItemDto(VUnifiedOrder o)
